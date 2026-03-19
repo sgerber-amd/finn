@@ -1,0 +1,231 @@
+#!/bin/bash
+#
+# Run add_multi compressor integration tests from the finn tb/ directory.
+# For each (N, ARG_WIDTH) configuration:
+#   1. Generate comp_NuW_dD.sv via add_multi_finn.py
+#   2. Inject CATCH_COMP entry into a local copy of add_multi.sv
+#   3. Expand TB and TCL templates
+#   4. Run XSim via Vivado
+#
+# Prerequisites:
+#   - Vivado on PATH
+#   - compressor-python source (COMP_SRC_DIR)
+
+set -euo pipefail
+
+# If asserted, logs are kept.
+: "${KEEP_LOG:=0}"
+# Limit the number of parallel worker processes for simulation.
+: "${MAX_WORKERS:=12}"
+
+if ! command -v vivado >/dev/null 2>&1; then
+	echo "ERROR: vivado not found in PATH." >&2
+	echo "  Source Vivado settings first, e.g. settings64.sh." >&2
+	exit 1
+fi
+
+echo "Vivado: $(command -v vivado)"
+echo "Vivado version: $(vivado -version | head -n 1)"
+echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS"
+
+# Resolve directories
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MVU_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+GEN_BASE="$SCRIPT_DIR/gen"
+
+# Compressor-python source directory
+if [ -d "$MVU_DIR/compressor" ]; then
+	COMP_SRC_DIR="$MVU_DIR/compressor"
+elif [ -d "$MVU_DIR/../../deps/compressor-python/src" ]; then
+	COMP_SRC_DIR="$(cd "$MVU_DIR/../../deps/compressor-python/src" && pwd)"
+else
+	COMP_SRC_DIR="${COMP_SRC_DIR:-}"
+fi
+
+if [ -z "$COMP_SRC_DIR" ] || [ ! -f "$COMP_SRC_DIR/add_multi_finn.py" ]; then
+	echo "ERROR: Cannot find compressor-python source." >&2
+	echo "  Expected at $MVU_DIR/compressor/ or set COMP_SRC_DIR." >&2
+	exit 1
+fi
+echo "Compressor source: $COMP_SRC_DIR"
+
+# HDL directory (for TB/TCL templates and add_multi_comp_top.sv)
+HDL_DIR="$COMP_SRC_DIR/hdl"
+if [ ! -f "$HDL_DIR/add_multi_comp_tb_template.sv" ]; then
+	echo "ERROR: HDL templates not found at $HDL_DIR" >&2
+	exit 1
+fi
+
+# Test configurations:  --n N --arg_width W [-p pipeline_every]
+TESTS=(
+	# Small configs (fast to generate and simulate)
+	"--n 8  --arg_width 4"
+	"--n 8  --arg_width 4  -p 2"
+	"--n 16 --arg_width 3"
+	"--n 16 --arg_width 6  -p 2"
+
+	# Medium configs matching common FINN parameters
+	"--n 32 --arg_width 6  -p 2"
+	"--n 32 --arg_width 16 -p 2"
+
+	# Large configs
+	"--n 47 --arg_width 5  -p 2"
+	"--n 56 --arg_width 8  -p 2"
+)
+
+function parse_config {
+	local  n="" w="" p="" p_flag=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--n)         n="$2"; shift 2;;
+			--arg_width) w="$2"; shift 2;;
+			-p)          p="$2"; p_flag="-p $2"; shift 2;;
+			*)           shift;;
+		esac
+	done
+	CFG_N="$n"
+	CFG_W="$w"
+	CFG_P_FLAG="$p_flag"
+	CFG_LABEL="n${n}_w${w}"
+	if [ -n "$p" ]; then CFG_LABEL="${CFG_LABEL}_p${p}"; fi
+}
+
+# Active Workers: PID -> LABEL
+declare -A workers=()
+declare -A errcodes=()
+LABELS=()
+
+function collect_workers {
+	local  pid label code
+	while :; do
+		for pid in "${!workers[@]}"; do
+			if ! kill -0 "$pid" 2>/dev/null; then
+				label=${workers["$pid"]}
+				wait "$pid"
+				code=$?
+				errcodes["$label"]="$code"
+				unset  "workers[$pid]"
+				echo "- $label -> $code"
+			fi
+		done
+		if [ "${#workers[@]}" -le "$1" ]; then return; fi
+		sleep 5
+	done
+}
+
+function start_test {
+	local  label="$1"
+	echo "+ $label ..."
+	run_sim "$label" &
+	workers[$!]="$label"
+}
+
+function run_sim {
+	local  label="$1"
+	local  log tcl out vivado_rc err_count tcl_err_count
+
+	tcl="$GEN_BASE/$label/add_multi_comp_${label}.tcl"
+	if [ ! -f "$tcl" ]; then
+		echo "ERROR: TCL script not found: $tcl" >&2
+		exit 1
+	fi
+
+	if [ "$KEEP_LOG" -gt 0 ]; then log=(-log "$GEN_BASE/$label/add_multi_comp_${label}.sim.log"); else log=(-nolog); fi
+	out="$GEN_BASE/$label/add_multi_comp_${label}.runner.out"
+	if ! vivado "${log[@]}" -nojournal -mode batch -source "$tcl" >"$out" 2>&1; then
+		vivado_rc=$?
+	else
+		vivado_rc=0
+	fi
+	err_count=$(grep -ic '^Error: ' "$out" || true)
+	tcl_err_count=$(grep -Eic "can't read \"|invalid command name|no such variable|^ERROR: \[Common" "$out" || true)
+	if [ "$vivado_rc" -ne 0 ] || [ "$tcl_err_count" -gt 0 ]; then
+		echo "ERROR: Vivado/Tcl failed for $label (vivado_rc=$vivado_rc, error_lines=$err_count, tcl_errors=$tcl_err_count)." >&2
+		exit 1
+	fi
+	exit "$err_count"
+}
+
+# Phase 1: Generate compressor cores and expand templates
+echo -e "Generating configs:\n"
+for i in "${!TESTS[@]}"; do
+	args="${TESTS[$i]}"
+	# shellcheck disable=SC2086
+	parse_config $args
+	label="$CFG_LABEL"
+	LABELS+=("$label")
+
+	gen_dir="$GEN_BASE/$label"
+	mkdir -p "$gen_dir"
+
+	echo "  Generating $label ..."
+
+	# Generate compressor core
+	# Run from compressor source dir so bare imports resolve correctly.
+	# shellcheck disable=SC2086
+	if ! gen_out=$(cd "$COMP_SRC_DIR" && python3 add_multi_finn.py \
+		--n "$CFG_N" --arg_width "$CFG_W" $CFG_P_FLAG \
+		-o "$gen_dir" 2>&1); then
+		echo "GENERATION FAILED for $label:" >&2
+		echo "$gen_out" >&2
+		exit 1
+	fi
+
+	# Extract module name and pipeline depth from generator output
+	comp_name=$(echo "$gen_out" | sed -n 's/^ *Module name:[[:space:]]*//p' | head -n 1)
+	comp_depth=$(echo "$gen_out" | sed -n 's/^ *Pipeline depth:[[:space:]]*//p' | head -n 1 | grep -Eo '[0-9]+' || true)
+	if [ -z "$comp_name" ]; then
+		echo "ERROR: Could not extract comp_name from generator output for $label" >&2
+		exit 1
+	fi
+	if [ -z "$comp_depth" ]; then
+		echo "ERROR: Could not extract comp_depth from generator output for $label" >&2
+		exit 1
+	fi
+
+	tb_depth="$comp_depth"
+
+	# Create a local copy of add_multi.sv with CATCH_COMP entry injected
+	sed 's|if(0) begin end|if(0) begin end\n\t`CATCH_COMP('"$CFG_N,$CFG_W,$comp_depth"')|' \
+		"$MVU_DIR/add_multi.sv" > "$gen_dir/add_multi.sv"
+
+	# Expand TB template
+	sed -e "s/{n}/$CFG_N/g" \
+	    -e "s/{arg_width}/$CFG_W/g" \
+	    -e "s/{depth}/$tb_depth/g" \
+	    -e "s/{label}/$label/g" \
+	    "$HDL_DIR/add_multi_comp_tb_template.sv" > "$gen_dir/add_multi_comp_${label}_tb.sv"
+
+	# Expand TCL template
+	sed -e "s|{label}|$label|g" \
+	    -e "s|{hdl_dir}|$HDL_DIR|g" \
+	    -e "s|{mvu_pkg_path}|$MVU_DIR/mvu_pkg.sv|g" \
+	    -e "s|{add_multi_path}|$gen_dir/add_multi.sv|g" \
+	    -e "s|{gen_dir}|$gen_dir|g" \
+	    "$HDL_DIR/add_multi_comp_template.tcl" > "$gen_dir/add_multi_comp_${label}.tcl"
+done
+echo
+
+# Phase 2: Run simulations in parallel
+echo -e "Running simulations with $MAX_WORKERS parallel workers:\n"
+for label in "${LABELS[@]}"; do
+	collect_workers $((MAX_WORKERS - 1))
+	start_test "$label"
+done
+collect_workers 0
+echo
+
+# Print summary
+overall=0
+echo -e "Summary:\n"
+for label in "${LABELS[@]}"; do
+	code="${errcodes[$label]}"
+	if [ "$code" -eq 0 ]; then  msg=$'\e[92;1mPASS\e[0m'
+	else
+		msg=$'\e[91;1mFAIL\e[0m'" (errors: $code)"
+		overall=1
+	fi
+	echo "  $label: $msg"
+done
+echo
+exit "$overall"
