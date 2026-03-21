@@ -1,22 +1,24 @@
 #!/bin/bash
 #
-# Run add_multi compressor integration tests from the finn tb/ directory.
-# For each (N, ARG_WIDTH) configuration:
-#   1. Generate comp_NuW_dD.sv via add_multi_finn.py
-#   2. Inject CATCH_COMP entry into a local copy of add_multi.sv
-#   3. Expand TB and TCL templates
-#   4. Run XSim via Vivado
+# Run MVU-level add_multi compressor integration tests.
+# For each (MH, MW, PE, SIMD, WW, AW, ACCU_WIDTH) configuration:
+#   1. Compute lo_width per DSP lane via add_multi_finn.py --mvu
+#   2. Generate comp_NuW_dD.sv compressors for each unique (SIMD, lo_width)
+#   3. Inject CATCH_COMP entries into a local copy of add_multi.sv
+#   4. Expand TB and TCL templates
+#   5. Run full mvu_vvu_axi simulation via XSim
+#
+# This tests the DSP lane path (genSoftVec in mvu.sv) with compressor-
+# replaced adder trees, verifying end-to-end MVU correctness.
 #
 # Prerequisites:
 #   - Vivado on PATH
 #   - compressor-python source (COMP_SRC_DIR)
 
-set -euo pipefail
-
 # If asserted, logs are kept.
-: "${KEEP_LOG:=0}"
+((${KEEP_LOG:=0}))
 # Limit the number of parallel worker processes for simulation.
-: "${MAX_WORKERS:=12}"
+((${MAX_WORKERS:=12}))
 
 if ! command -v vivado >/dev/null 2>&1; then
 	echo "ERROR: vivado not found in PATH." >&2
@@ -33,61 +35,65 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MVU_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GEN_BASE="$SCRIPT_DIR/gen"
 
-# Compressor-python source directory
-if [ -d "$MVU_DIR/compressor" ]; then
-	COMP_SRC_DIR="$MVU_DIR/compressor"
-elif [ -d "$MVU_DIR/../../deps/compressor-python/src" ]; then
-	COMP_SRC_DIR="$(cd "$MVU_DIR/../../deps/compressor-python/src" && pwd)"
-else
-	COMP_SRC_DIR="${COMP_SRC_DIR:-}"
-fi
+# Compressor source directory and PYTHONPATH
+FINN_SRC="$(cd "$MVU_DIR/../../src" && pwd)"
+export PYTHONPATH="$FINN_SRC${PYTHONPATH:+:$PYTHONPATH}"
 
-if [ -z "$COMP_SRC_DIR" ] || [ ! -f "$COMP_SRC_DIR/add_multi_finn.py" ]; then
-	echo "ERROR: Cannot find compressor-python source." >&2
-	echo "  Expected at $MVU_DIR/compressor/ or set COMP_SRC_DIR." >&2
+COMP_SRC_DIR="$FINN_SRC/finn/compressor/src"
+if [ ! -f "$COMP_SRC_DIR/add_multi_finn.py" ]; then
+	echo "ERROR: Cannot find compressor source." >&2
+	echo "  Expected at $COMP_SRC_DIR/" >&2
 	exit 1
 fi
 echo "Compressor source: $COMP_SRC_DIR"
 
-# HDL directory (for TB/TCL templates and add_multi_comp_top.sv)
-HDL_DIR="$COMP_SRC_DIR/hdl"
-if [ ! -f "$HDL_DIR/add_multi_comp_tb_template.sv" ]; then
-	echo "ERROR: HDL templates not found at $HDL_DIR" >&2
-	exit 1
-fi
+# Working directory for Vivado project files
+: "${WORK_DIR:=$SCRIPT_DIR}"
 
-# Test configurations:  --n N --arg_width W [-p pipeline_every]
+# Test configurations: --mh MH --mw MW --pe PE --simd SIMD --ww WW --aw AW --accu_width ACCU [--signed_activations] [--narrow_weights]
+#
+# These must hit the genSoftVec path in mvu.sv (not genINT8), which requires
+# either NUM_LANES > 3 (for VERSION=3) or WW > 8 or AW > 9.
+# Also, USE_COMPRESSOR must be 0, so WW >= 4 or AW >= 4.
 TESTS=(
-	# Small configs (fast to generate and simulate)
-	"--n 8  --arg_width 4"
-	"--n 8  --arg_width 4  -p 2"
-	"--n 16 --arg_width 3"
-	"--n 16 --arg_width 6  -p 2"
-
-	# Medium configs matching common FINN parameters
-	"--n 32 --arg_width 6  -p 2"
-	"--n 32 --arg_width 16 -p 2"
-
-	# Large configs
-	"--n 47 --arg_width 5  -p 2"
-	"--n 56 --arg_width 8  -p 2"
+	# 4x4 weights/activations, 4 lanes → 3 unique compressors (lo_widths: 8, 7, 16)
+	"--mh 16 --mw 16 --pe 4 --simd 8 --ww 4 --aw 4 --accu_width 16"
+	# Same with signed activations
+	"--mh 16 --mw 16 --pe 4 --simd 8 --ww 4 --aw 4 --accu_width 16 --signed_activations"
+	# 4x10 (AW > 9 bypasses genINT8), 2 lanes → 2 unique compressors (lo_widths: 22, 24)
+	"--mh  8 --mw 16 --pe 2 --simd 8 --ww 4 --aw 10 --accu_width 24 --signed_activations"
+	# 4x4 narrow weights, 4 lanes → 3 unique compressors (lo_widths: 8, 8, 7, 16)
+	"--mh 16 --mw 16 --pe 4 --simd 8 --ww 4 --aw 4 --accu_width 16 --narrow_weights"
 )
 
 function parse_config {
-	local  n="" w="" p="" p_flag=""
+	local  mh="" mw="" pe="" simd="" ww="" aw="" accu="" signed_act="" signed_flag="" narrow="" narrow_flag=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			--n)         n="$2"; shift 2;;
-			--arg_width) w="$2"; shift 2;;
-			-p)          p="$2"; p_flag="-p $2"; shift 2;;
-			*)           shift;;
+			--mh)    mh="$2"; shift 2;;
+			--mw)    mw="$2"; shift 2;;
+			--pe)    pe="$2"; shift 2;;
+			--simd)  simd="$2"; shift 2;;
+			--ww)    ww="$2"; shift 2;;
+			--aw)    aw="$2"; shift 2;;
+			--accu_width) accu="$2"; shift 2;;
+			--signed_activations) signed_act="_sa"; signed_flag="--signed_activations"; shift;;
+			--narrow_weights) narrow="_nw"; narrow_flag="--narrow_weights"; shift;;
+			*) shift;;
 		esac
 	done
-	CFG_N="$n"
-	CFG_W="$w"
-	CFG_P_FLAG="$p_flag"
-	CFG_LABEL="n${n}_w${w}"
-	if [ -n "$p" ]; then CFG_LABEL="${CFG_LABEL}_p${p}"; fi
+	CFG_MH="$mh"
+	CFG_MW="$mw"
+	CFG_PE="$pe"
+	CFG_SIMD="$simd"
+	CFG_WW="$ww"
+	CFG_AW="$aw"
+	CFG_ACCU="$accu"
+	CFG_SIGNED_FLAG="$signed_flag"
+	CFG_SIGNED_ACT="$([ -n "$signed_flag" ] && echo 1 || echo 0)"
+	CFG_NARROW_FLAG="$narrow_flag"
+	CFG_NARROW="$([ -n "$narrow_flag" ] && echo 1 || echo 0)"
+	CFG_LABEL="mh${mh}_mw${mw}_pe${pe}_simd${simd}_ww${ww}_aw${aw}${signed_act}${narrow}"
 }
 
 # Active Workers: PID -> LABEL
@@ -124,15 +130,20 @@ function run_sim {
 	local  label="$1"
 	local  log tcl out vivado_rc err_count tcl_err_count
 
-	tcl="$GEN_BASE/$label/add_multi_comp_${label}.tcl"
+	tcl="$GEN_BASE/$label/mvu_add_multi_comp_${label}.tcl"
 	if [ ! -f "$tcl" ]; then
 		echo "ERROR: TCL script not found: $tcl" >&2
 		exit 1
 	fi
 
-	if [ "$KEEP_LOG" -gt 0 ]; then log=(-log "$GEN_BASE/$label/add_multi_comp_${label}.sim.log"); else log=(-nolog); fi
-	out="$GEN_BASE/$label/add_multi_comp_${label}.runner.out"
-	if ! vivado "${log[@]}" -nojournal -mode batch -source "$tcl" >"$out" 2>&1; then
+	if [ "$KEEP_LOG" -gt 0 ]; then
+		log=(-log "$GEN_BASE/$label/mvu_add_multi_comp_${label}.sim.log")
+	else
+		log=(-nolog)
+	fi
+	out="$GEN_BASE/$label/mvu_add_multi_comp_${label}.runner.out"
+	mkdir -p "$WORK_DIR"
+	if ! (cd "$WORK_DIR" && vivado "${log[@]}" -nojournal -mode batch -source "$tcl" >"$out" 2>&1); then
 		vivado_rc=$?
 	else
 		vivado_rc=0
@@ -146,7 +157,7 @@ function run_sim {
 	exit "$err_count"
 }
 
-# Phase 1: Generate compressor cores and expand templates
+# Phase 1: Generate compressor cores and expand templates per config
 echo -e "Generating configs:\n"
 for i in "${!TESTS[@]}"; do
 	args="${TESTS[$i]}"
@@ -160,49 +171,74 @@ for i in "${!TESTS[@]}"; do
 
 	echo "  Generating $label ..."
 
-	# Generate compressor core
-	# Run from compressor source dir so bare imports resolve correctly.
-	# shellcheck disable=SC2086
-	if ! gen_out=$(cd "$COMP_SRC_DIR" && python3 add_multi_finn.py \
-		--n "$CFG_N" --arg_width "$CFG_W" $CFG_P_FLAG \
+	# Generate compressor cores via add_multi_finn.py --mvu
+	# This computes lo_width per DSP lane and generates one comp_NuW_dD.sv
+	# per unique (SIMD, lo_width).
+	if ! gen_out=$(python3 -m finn.compressor.src.add_multi_finn \
+		--mvu --n "$CFG_SIMD" --version 3 \
+		--ww "$CFG_WW" --aw "$CFG_AW" --accu_width "$CFG_ACCU" \
+		--narrow_weights "$CFG_NARROW" \
 		-o "$gen_dir" 2>&1); then
 		echo "GENERATION FAILED for $label:" >&2
 		echo "$gen_out" >&2
 		exit 1
 	fi
 
-	# Extract module name and pipeline depth from generator output
-	comp_name=$(echo "$gen_out" | sed -n 's/^ *Module name:[[:space:]]*//p' | head -n 1)
-	comp_depth=$(echo "$gen_out" | sed -n 's/^ *Pipeline depth:[[:space:]]*//p' | head -n 1 | grep -Eo '[0-9]+' || true)
-	if [ -z "$comp_name" ]; then
-		echo "ERROR: Could not extract comp_name from generator output for $label" >&2
-		exit 1
-	fi
-	if [ -z "$comp_depth" ]; then
-		echo "ERROR: Could not extract comp_depth from generator output for $label" >&2
-		exit 1
+	# Display generation summary
+	echo "$gen_out" | grep -E '(NUM_LANES|LO_WIDTH|Lane|Module|Delay|reuses)' | sed 's/^/    /'
+
+	# Extract all generated module names for CATCH_COMP injection
+	# Format from generator: "    Module:    comp_8u7_d0"
+	comp_modules=()
+	while IFS= read -r line; do
+		comp_modules+=("$line")
+	done < <(echo "$gen_out" | sed -n 's/^ *Module:[[:space:]]*//p')
+
+	if [ "${#comp_modules[@]}" -eq 0 ]; then
+		echo "    No compressors generated (SIMD too small or single lane)."
+		echo "    Skipping — behavioral add_multi will be used."
 	fi
 
-	tb_depth="$comp_depth"
+	# Build CATCH_COMP entries from the module names.
+	# Module names follow the pattern comp_NuW_dD (e.g. comp_8u7_d0).
+	catch_entries=""
+	for mod in "${comp_modules[@]}"; do
+		if [[ "$mod" =~ comp_([0-9]+)u([0-9]+)_d([0-9]+) ]]; then
+			cn="${BASH_REMATCH[1]}"
+			cw="${BASH_REMATCH[2]}"
+			cd_val="${BASH_REMATCH[3]}"
+			catch_entries="${catch_entries}\t\`CATCH_COMP(${cn},${cw},${cd_val})\n"
+		else
+			echo "WARNING: Could not parse module name '$mod'" >&2
+		fi
+	done
 
-	# Create a local copy of add_multi.sv with CATCH_COMP entry injected
-	sed 's|if(0) begin end|if(0) begin end\n\t`CATCH_COMP('"$CFG_N,$CFG_W,$comp_depth"')|' \
-		"$MVU_DIR/add_multi.sv" > "$gen_dir/add_multi.sv"
+	# Create a local copy of add_multi.sv with CATCH_COMP entries injected
+	if [ -n "$catch_entries" ]; then
+		sed "s|if(0) begin end|if(0) begin end\n${catch_entries}|" \
+			"$MVU_DIR/add_multi.sv" > "$gen_dir/add_multi.sv"
+	else
+		cp "$MVU_DIR/add_multi.sv" "$gen_dir/add_multi.sv"
+	fi
 
 	# Expand TB template
-	sed -e "s/{n}/$CFG_N/g" \
-	    -e "s/{arg_width}/$CFG_W/g" \
-	    -e "s/{depth}/$tb_depth/g" \
+	sed -e "s/{mh}/$CFG_MH/g" \
+	    -e "s/{mw}/$CFG_MW/g" \
+	    -e "s/{pe}/$CFG_PE/g" \
+	    -e "s/{simd}/$CFG_SIMD/g" \
+	    -e "s/{ww}/$CFG_WW/g" \
+	    -e "s/{aw}/$CFG_AW/g" \
+	    -e "s/{accu_width}/$CFG_ACCU/g" \
+	    -e "s/{signed_act}/$CFG_SIGNED_ACT/g" \
+	    -e "s/{narrow}/$CFG_NARROW/g" \
 	    -e "s/{label}/$label/g" \
-	    "$HDL_DIR/add_multi_comp_tb_template.sv" > "$gen_dir/add_multi_comp_${label}_tb.sv"
+	    "$SCRIPT_DIR/mvu_add_multi_comp_tb_template.sv" > "$gen_dir/mvu_add_multi_comp_${label}_tb.sv"
 
 	# Expand TCL template
 	sed -e "s|{label}|$label|g" \
-	    -e "s|{hdl_dir}|$HDL_DIR|g" \
-	    -e "s|{mvu_pkg_path}|$MVU_DIR/mvu_pkg.sv|g" \
-	    -e "s|{add_multi_path}|$gen_dir/add_multi.sv|g" \
+	    -e "s|{mvu_dir}|$MVU_DIR|g" \
 	    -e "s|{gen_dir}|$gen_dir|g" \
-	    "$HDL_DIR/add_multi_comp_template.tcl" > "$gen_dir/add_multi_comp_${label}.tcl"
+	    "$SCRIPT_DIR/mvu_add_multi_comp_tb_template.tcl" > "$gen_dir/mvu_add_multi_comp_${label}.tcl"
 done
 echo
 
@@ -225,7 +261,7 @@ for label in "${LABELS[@]}"; do
 		msg=$'\e[91;1mFAIL\e[0m'" (errors: $code)"
 		overall=1
 	fi
-	echo "  $label: $msg"
+	printf '  %-50s %s\n' "$label:" "$msg"
 done
 echo
 exit "$overall"

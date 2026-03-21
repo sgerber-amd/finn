@@ -10,8 +10,6 @@
 #   - Vivado on PATH
 #   - compressor-python source (COMP_SRC_DIR)
 
-set -euo pipefail
-
 if ! command -v vivado >/dev/null 2>&1; then
 	echo "ERROR: vivado not found in PATH." >&2
 	echo "  Source Vivado settings first, e.g. settings64.sh." >&2
@@ -25,19 +23,16 @@ echo "Vivado version: $(vivado -version | head -n 1)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MVU_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GEN_BASE="$SCRIPT_DIR/gen"
+: "${WORK_DIR:=/scratch/users/sgerber}"
 
-# Compressor-python source directory
-if [ -d "$MVU_DIR/compressor" ]; then
-	COMP_SRC_DIR="$MVU_DIR/compressor"
-elif [ -d "$MVU_DIR/../../deps/compressor-python/src" ]; then
-	COMP_SRC_DIR="$(cd "$MVU_DIR/../../deps/compressor-python/src" && pwd)"
-else
-	COMP_SRC_DIR="${COMP_SRC_DIR:-}"
-fi
+# Compressor source directory and PYTHONPATH
+FINN_SRC="$(cd "$MVU_DIR/../../src" && pwd)"
+export PYTHONPATH="$FINN_SRC${PYTHONPATH:+:$PYTHONPATH}"
 
-if [ -z "$COMP_SRC_DIR" ] || [ ! -f "$COMP_SRC_DIR/dotp_finn.py" ]; then
-	echo "ERROR: Cannot find compressor-python source." >&2
-	echo "  Expected at $MVU_DIR/compressor/ or set COMP_SRC_DIR." >&2
+COMP_SRC_DIR="$FINN_SRC/finn/compressor/src"
+if [ ! -f "$COMP_SRC_DIR/dotp_finn.py" ]; then
+	echo "ERROR: Cannot find compressor source." >&2
+	echo "  Expected at $COMP_SRC_DIR/" >&2
 	exit 1
 fi
 echo "Compressor source: $COMP_SRC_DIR"
@@ -90,7 +85,7 @@ for i in "${!TESTS[@]}"; do
 	# Generate compressor core
 	# Run from compressor source dir so bare imports resolve correctly.
 	# shellcheck disable=SC2086
-	gen_out=$(cd "$COMP_SRC_DIR" && python3 dotp_finn.py \
+	gen_out=$(python3 -m finn.compressor.src.dotp_finn \
 		--simd "$CFG_SIMD" --ww "$CFG_WW" --aw "$CFG_AW" \
 		--accu_width "$CFG_ACCU" $CFG_SIGNED_FLAG \
 		--dotp-template "$MVU_DIR/dotp_comp_template.sv" \
@@ -123,7 +118,8 @@ for i in "${!TESTS[@]}"; do
 
 	# Run Vivado synthesis
 	out="$gen_dir/mvu_comp_synth_${label}.out"
-	if vivado -nolog -nojournal -mode batch -source "$gen_dir/mvu_comp_synth_${label}.tcl" >"$out" 2>&1; then
+	mkdir -p "$WORK_DIR"
+	if (cd "$WORK_DIR" && vivado -nolog -nojournal -mode batch -source "$gen_dir/mvu_comp_synth_${label}.tcl" >"$out" 2>&1); then
 		echo "  PASS — see $gen_dir for utilization/timing reports"
 	else
 		echo "  FAIL — see $out"

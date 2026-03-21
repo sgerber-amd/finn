@@ -4,11 +4,12 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
- * @brief	Testbench for MVU with LUT-based compressor tree compute path.
- *		Exercises the full mvu_vvu_axi pipeline with USE_COMPRESSOR=1
- *		through AXI-Stream weight/activation interfaces.
+ * @brief	Testbench for MVU with add_multi compressor-replaced adder trees.
+ *		Exercises the full mvu_vvu_axi pipeline through the DSP lane path
+ *		(genSoftVec in mvu.sv) where add_multi instances are replaced by
+ *		generated LUT compressors via the CATCH_COMP mechanism.
  *
- * Template placeholders expanded by run_mvu_comp_tests.sh:
+ * Template placeholders expanded by run_mvu_add_multi_comp_tests.sh:
  *   {mh}         - Matrix Height
  *   {mw}         - Matrix Width
  *   {pe}         - Processing Elements
@@ -17,11 +18,11 @@
  *   {aw}         - Activation Width
  *   {accu_width} - Accumulator Width
  *   {signed_act} - Signed Activations (0 or 1)
- *   {comp_depth} - Compressor Pipeline Depth
+ *   {narrow}     - Narrow Weights (0 or 1)
  *   {label}      - Configuration label
  *****************************************************************************/
 
-module mvu_comp_{label}_tb;
+module mvu_add_multi_comp_{label}_tb;
 
 	localparam int unsigned  ROUNDS = 17;
 
@@ -33,7 +34,7 @@ module mvu_comp_{label}_tb;
 	localparam int unsigned  ACTIVATION_WIDTH = {aw};
 	localparam int unsigned  ACCU_WIDTH       = {accu_width};
 	localparam bit  SIGNED_ACTIVATIONS = {signed_act};
-	localparam int unsigned  COMP_PIPELINE_DEPTH = {comp_depth};
+	localparam bit  NARROW_WEIGHTS     = {narrow};
 
 	localparam int unsigned  SF = MW / SIMD;	// SIMD folds
 	localparam int unsigned  NF = MH / PE;		// Neuron folds
@@ -62,7 +63,7 @@ module mvu_comp_{label}_tb;
 	end
 
 	//-----------------------------------------------------------------------
-	// DUT — full MVU with AXI interfaces
+	// DUT — full MVU with AXI interfaces (DSP lane path with compressor trees)
 	logic [WEIGHT_STREAM_WIDTH_BA-1:0]  s_axis_weights_tdata;
 	logic  s_axis_weights_tvalid;
 	uwire  s_axis_weights_tready;
@@ -84,8 +85,7 @@ module mvu_comp_{label}_tb;
 		.WEIGHT_WIDTH(WEIGHT_WIDTH),
 		.ACCU_WIDTH(ACCU_WIDTH),
 		.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS),
-		.COMP_PIPELINE_DEPTH(COMP_PIPELINE_DEPTH),
-		.USE_COMPRESSOR(1)
+		.NARROW_WEIGHTS(NARROW_WEIGHTS)
 	) dut (
 		.ap_clk(clk),
 		.ap_clk2x(clk),
@@ -103,14 +103,8 @@ module mvu_comp_{label}_tb;
 
 	//-----------------------------------------------------------------------
 	// Reference Model
-	//
-	// For each output vector (MH elements), we compute:
-	//   result[h] = sum over w of (weight[h][w] * activation[w])
-	// with proper sign extension.
-	//-----------------------------------------------------------------------
 	accu_t  ExpQ[$];
 
-	// Feed one complete matrix-vector multiplication
 	task automatic feed_mvau(
 		input weight_t     [MH-1:0][MW-1:0]  W,
 		input activation_t [MW-1:0]           A
@@ -202,6 +196,12 @@ module mvu_comp_{label}_tb;
 			automatic weight_t     [MH-1:0][MW-1:0]  W;
 			automatic activation_t [MW-1:0]           A;
 			void'(std::randomize(W, A));
+			if(NARROW_WEIGHTS) begin
+				foreach(W[h,w]) begin
+					if(W[h][w] === weight_t'(-2**(WEIGHT_WIDTH-1)))
+						W[h][w] += 1;
+				end
+			end
 			feed_mvau(W, A);
 		end
 
@@ -257,4 +257,4 @@ module mvu_comp_{label}_tb;
 			$error("Unexpected number of checks: %0d instead of %0d.", Checks, expected_checks);
 	end
 
-endmodule : mvu_comp_{label}_tb
+endmodule : mvu_add_multi_comp_{label}_tb

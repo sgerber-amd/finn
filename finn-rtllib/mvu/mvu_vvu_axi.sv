@@ -67,6 +67,10 @@ module mvu_vvu_axi #(
 	// LUT-based compressor tree pipeline depth (only meaningful for small operands)
 	int unsigned  COMP_PIPELINE_DEPTH = 1,
 
+	// Passed at generation time, wether compressors were generated if deemed worth it.
+	// Decides wether ti use LUT-based compressors instead of DSPs.
+	bit USE_COMPRESSOR = 0,
+
 	// Safely deducible parameters
 	localparam int unsigned  WEIGHT_STREAM_WIDTH    = PE * SIMD * WEIGHT_WIDTH,
 	localparam int unsigned  WEIGHT_STREAM_WIDTH_BA = (WEIGHT_STREAM_WIDTH + 7)/8 * 8,
@@ -129,8 +133,10 @@ module mvu_vvu_axi #(
 		end
 	end
 
+	// USE_COMPRESSOR is now controlled by Python (passed through wrapper).
+	// Kept as a localparam alias from the module parameter for backward compatibility.
 	// Use LUT-based compressor tree for small operands where DSPs are wasteful
-	localparam bit  USE_COMPRESSOR = IS_MVU && !PUMPED_COMPUTE && (WEIGHT_WIDTH < 4) && (ACTIVATION_WIDTH < 4);
+	// localparam bit  USE_COMPRESSOR = IS_MVU && !PUMPED_COMPUTE && (WEIGHT_WIDTH <= 4) && (ACTIVATION_WIDTH <= 4);
 
 	uwire  rst = !ap_rst_n;
 
@@ -365,8 +371,11 @@ module mvu_vvu_axi #(
 			VERSION == 3?   3 + (SEGMENTLEN == 0? 0 : ((SIMD+2)/3 -1)/SEGMENTLEN) :
 			/* else */      3 + $clog2(SIMD+1) + (SIMD == 1);
 
-		// This is conservative and could be divided by a guaranteed minimum output interval, e.g. MW/SIMD.
-		localparam int unsigned  MAX_IN_FLIGHT = CORE_PIPELINE_DEPTH;
+		// Floor at the DSP-equivalent depth so the compressor path (shallow pipeline)
+		// still has enough output queue slots to absorb backpressure transients.
+		localparam int unsigned  DSP_PIPELINE_DEPTH = 3 + $clog2(SIMD+1) + (SIMD == 1);
+		localparam int unsigned  MAX_IN_FLIGHT =
+			CORE_PIPELINE_DEPTH > DSP_PIPELINE_DEPTH? CORE_PIPELINE_DEPTH : DSP_PIPELINE_DEPTH;
 		typedef logic [PE-1:0][ACCU_WIDTH-1:0]  output_t;
 
 		logic signed [$clog2(MAX_IN_FLIGHT+1):0]  OPtr = '1;	// -1 | 0, 1, ..., MAX_IN_FLIGHT

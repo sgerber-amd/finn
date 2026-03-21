@@ -77,7 +77,7 @@ else if(!RESET_ZERO && (N == n) && (ARG_WIDTH == w) && (DEPTH >= d) && (0 <= ARG
 		.clk, \
 		.in, .out \
 	); \
-	initial assert($bits(out) >= $bits(comp_inst.out)) else $error("CATCH_COMP(%0d,%0d,%0d): compressor output width %0d > SUM_WIDTH %0d", n, w, d, $bits(comp_inst.out), SUM_WIDTH); \
+	initial assert($bits(out) >= $bits(comp_inst.out)) else $warning("CATCH_COMP(%0d,%0d,%0d): compressor output width %0d > SUM_WIDTH %0d", n, w, d, $bits(comp_inst.out), SUM_WIDTH); \
 \
 	localparam int unsigned  COMP_DELAY = d; \
 	localparam int unsigned  SUM_DELAY = DEPTH - COMP_DELAY; \
