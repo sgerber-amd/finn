@@ -187,7 +187,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         comp_name = self.get_nodeattr("comp_module_name")
         if comp_name:
             comp_hdl_dir = os.path.join(
-                os.environ["FINN_ROOT"], "finn-rtllib/mvu/compressor-python/hdl/")
+                os.environ["FINN_ROOT"], "src/finn/compressor/hdl/")
             sourcefiles.append(os.path.join(code_gen_dir, "dotp_comp.sv"))
             sourcefiles.append(os.path.join(comp_hdl_dir, "mul_comp_map.sv"))
             sourcefiles.append(os.path.join(code_gen_dir, comp_name + ".sv"))
@@ -358,13 +358,6 @@ class MVAU_rtl(MVAU, RTLBackend):
                 self.set_nodeattr("add_multi_comp_names",
                                   ";".join(result["comp_names"]))
 
-                # After line ~340 (after the elif block closes)
-        if self.get_nodeattr("comp_module_name"):
-            print(f"[COMPRESSOR] {self.onnx_node.name}: dotp_comp generated -> {self.get_nodeattr('comp_module_name')}")
-        elif self.get_nodeattr("add_multi_comp_names"):
-            print(f"[COMPRESSOR] {self.onnx_node.name}: add_multi generated -> {self.get_nodeattr('add_multi_comp_names')}")
-        else:
-            print(f"[COMPRESSOR] {self.onnx_node.name}: no compressor (ww={ww}, aw={aw}, version={version}, simd={simd}, pumped={pumped_compute})")
         # add general parameters to dictionary
         code_gen_dict["$MODULE_NAME_AXI_WRAPPER$"] = [self.get_verilog_top_module_name()]
         # save top module name so we can refer to it after this node has been renamed
@@ -459,7 +452,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         comp_name = self.get_nodeattr("comp_module_name")
         if comp_name:
             comp_hdl_dir = os.path.join(
-                os.environ["FINN_ROOT"], "finn-rtllib/mvu/compressor-python/hdl/")
+                os.environ["FINN_ROOT"], "src/finn/compressor/hdl/")
             verilog_files.append(os.path.join(code_gen_dir, "dotp_comp.sv"))
             verilog_files.append(os.path.join(comp_hdl_dir, "mul_comp_map.sv"))
             verilog_files.append(os.path.join(code_gen_dir, comp_name + ".sv"))

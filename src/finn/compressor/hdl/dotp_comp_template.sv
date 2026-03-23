@@ -6,18 +6,11 @@
  *
  * @brief	LUT-based dot product with fused accumulation.
  * @details	Drop-in replacement for DSP-based compute cores in the MVU.
- *		Uses a generated compressor tree for the actual reduction.
- *		The compressor core must be generated externally via
- *		compressor-python and included as a separate source file.
+ *		Uses a generated compressor tree for the reduction.
  *
  *		This file is a TEMPLATE — $COMP_MODULE_NAME$ is substituted
  *		at code generation time with the config-specific compressor
- *		module name (e.g. comp_8xs2s2).  This follows the same
- *		template pattern as mvu_vvu_axi_wrapper.v.
- *
- *		The `mul_comp_map` interface handles partial-product broadcasting
- *		and is fully parametric.  It requires NA >= NB, so this module
- *		swaps weight/activation operands when ACTIVATION_WIDTH > WEIGHT_WIDTH.
+ *		module name (e.g. comp_8xs2s2).
  *****************************************************************************/
 
 module dotp_comp #(
@@ -37,7 +30,7 @@ module dotp_comp #(
 	// Input
 	input	logic  last,
 	input	logic  zero,
-	input	logic signed [PE-1:0][SIMD-1:0][WEIGHT_WIDTH-1:0]  w,
+	input	logic signed [PE-1:0][SIMD-1:0][WEIGHT_WIDTH-1:0]   w,
 	input	logic        [SIMD-1:0][ACTIVATION_WIDTH-1:0]       a,
 
 	// Output
@@ -55,9 +48,9 @@ module dotp_comp #(
 	//-----------------------------------------------------------------------
 	// Operand Mapping
 	//
+	// The `mul_comp_map` interface handles partial-product broadcasting
 	// mul_comp_map requires NA >= NB.  Weights are always signed.
 	// If activations are wider, swap operands so that ia gets the wider one.
-	//-----------------------------------------------------------------------
 	localparam bit  SWAPPED = ACTIVATION_WIDTH > WEIGHT_WIDTH;
 
 	localparam int unsigned  NA = SWAPPED ? ACTIVATION_WIDTH : WEIGHT_WIDTH;
@@ -65,9 +58,7 @@ module dotp_comp #(
 	localparam bit  SIGNED_A    = SWAPPED ? SIGNED_ACTIVATIONS : 1;  // weights always signed
 	localparam bit  SIGNED_B    = SWAPPED ? 1 : SIGNED_ACTIVATIONS;
 
-	//-----------------------------------------------------------------------
-	// Module-scope map instance for NM localparam and shape functions
-	//-----------------------------------------------------------------------
+	// Input to Matric Broadcasting
 	uwire [NA-1:0]  map0_ia = SWAPPED ? NA'(a[0])    : NA'(w[0][0]);
 	uwire [NB-1:0]  map0_ib = SWAPPED ? NB'(w[0][0]) : NB'(a[0]);
 	mul_comp_map #(.NA(NA), .NB(NB), .SIGNED_A(SIGNED_A), .SIGNED_B(SIGNED_B))
@@ -76,7 +67,6 @@ module dotp_comp #(
 
 	//-----------------------------------------------------------------------
 	// Pipeline shift register for last -> vld
-	//-----------------------------------------------------------------------
 /* verilator lint_off LITENDIAN */
 	logic [1:COMP_PIPELINE_DEPTH]  L = '0;
 /* verilator lint_on LITENDIAN */
