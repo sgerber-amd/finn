@@ -28,8 +28,30 @@ from typing import Optional
 def expand_template(template_path, output_path, substitutions):
     """
     Expand a text template by replacing placeholder tokens.
-    Raises ValueError if any $PLACEHOLDER$ tokens remain after substitution.
+
+    Parameters
+    ----------
+    template_path : str
+        Path to the template file.
+    output_path : str
+        Path where expanded output will be written.
+    substitutions : dict
+        Mapping of placeholder tokens to replacement values.
+
+    Raises
+    ------
+    FileNotFoundError
+        If template_path does not exist or output directory is missing.
+    ValueError
+        If any $PLACEHOLDER$ tokens remain after substitution.
     """
+    if not os.path.isfile(template_path):
+        raise FileNotFoundError(f"Template not found: {template_path}")
+
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.isdir(output_dir):
+        raise FileNotFoundError(f"Output directory does not exist: {output_dir}")
+
     with open(template_path, "r") as f:
         text = f.read()
     for key, value in substitutions.items():

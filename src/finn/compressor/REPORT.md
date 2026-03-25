@@ -146,6 +146,42 @@ WW=2, AW=4 (8xs4s2) — LOOKAHEAD8 GEA port issue causes X-propagation.
 
 ## 5. Known Issues and Shortcomings
 
+### 5.0 **HIGH PRIORITY — Narrow Weight Check Blocks Compressor Path on DSP48E1**
+
+**Problem:** The RTL MVAU eligibility check in `specialize_layers.py::_mvu_rtl_possible()`
+blocks ALL RTL (including compressor path) on DSP48E1 (7-series) when weights are non-narrow:
+
+```python
+# Current code (line 249-252):
+narrow_weights = False if weights_min == wdt.min() else True
+if not narrow_weights and dsp_block == "DSP48E1":
+    return False  # Blocks RTL entirely, including compressor path!
+```
+
+**Why this is wrong:**
+- **Narrow weights** is a DSP48E1 hardware limitation (DSP can't handle most negative
+  two's complement value reliably)
+- **Compressor trees are LUT-based** (LUT6CY primitives) and have no such limitation
+- Current gating prevents RTL MVAU with compressors from working on Pynq-Z1/7-series
+  even though compressors would work perfectly fine
+- Forces fallback to HLS unnecessarily
+
+**Impact:**
+- Benchmarking on Pynq-Z1 with random weights (which include min value) always falls
+  back to HLS for both DSP and compressor variants
+- Makes it impossible to test compressor improvements on accessible 7-series hardware
+- Current workaround: Must use Versal (VCK190) which has no narrow weight restriction
+
+**Fix needed:**
+The narrow weight check should only apply when DSPs will actually be used:
+1. First check if compressors will be used (`_is_dotp_comp_eligible()`)
+2. If using compressors → skip narrow weight check (LUT-based, no DSP)
+3. If using DSP path on DSP48E1 → then require narrow weights
+
+This should be fixed in `finn/transformation/fpgadataflow/specialize_layers.py`.
+
+---
+
 ### 5.1 Critical — FINN Python Integration Not Done
 
 matrixvectoractivation_rtl.py has NOT been modified.  The compressor path
@@ -513,3 +549,17 @@ three unique widths, each needing its own compressor module.
 5. **Extend testbench coverage** — long accumulation, overflow, backpressure.
 
 6. **Test 7-Series target** — verify LUT6_2 + CARRY4 path.
+
+---
+
+## 8. Code Maintenance: Refactoring for Production Quality
+
+**Date:** 2026-03-25
+
+### 8.1 DRY Violation in File List Construction (Fixed)
+
+**Problem:** `matrixvectoractivation_rtl.py` had ~35 lines of file list construction logic duplicated between `instantiate_ip()` and `get_rtl_file_list()`. Both methods independently built the same list of RTL source files (base MVU files + compressor files). This duplication risked the two implementations drifting if one was updated without the other.
+
+**Solution:** Extracted `_get_rtl_source_files(self, abspath=True)` helper method containing all file list logic. Both callers now delegate to this single source of truth. Eliminates maintenance hazard and ensures the two methods can never produce inconsistent file lists.
+
+**Impact:** ~35 lines of duplication removed. Future compressor file handling changes require only one update location.

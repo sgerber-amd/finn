@@ -4,27 +4,26 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
- * @brief	Testbench for add_multi compressor integration.
- *		Exercises the add_multi → CATCH_COMP compressor path via
- *		add_multi_comp_top for one (N, ARG_WIDTH, DEPTH) configuration.
+ * @brief	Standalone testbench for add_multi compressor (comp_NuW_dD).
+ *		Tests the compressor directly without requiring add_multi.sv.
  *
  * Template placeholders expanded by run_add_multi_comp_tests.sh:
- *   {n}         - Number of addends (N / SIMD)
- *   {arg_width} - Bit width of each addend
- *   {depth}     - Pipeline depth of compressor core
- *   {label}     - Configuration label (e.g. n8_w4_p2)
+ *   {n}           - Number of addends
+ *   {arg_width}   - Bit width of each addend
+ *   {depth}       - Pipeline depth of compressor
+ *   {label}       - Configuration label (e.g. n8_w4_p2)
+ *   {comp_module} - Generated compressor module name (e.g. comp_8u4_d0)
  *****************************************************************************/
 
-module add_multi_comp_{label}_tb import mvu_pkg::*;;
+module add_multi_comp_{label}_tb;
 
 	localparam int unsigned  N         = {n};
 	localparam int unsigned  ARG_WIDTH = {arg_width};
 	localparam int unsigned  DEPTH     = {depth};
-	localparam int unsigned  SUM_WIDTH = sumwidth(N, ARG_WIDTH, 0, 0);
+	localparam int unsigned  IN_WIDTH  = N * ARG_WIDTH;
+	// Use same formula as mvu_pkg::sumwidth() for consistency
+	localparam int unsigned  SUM_WIDTH = $clog2(N) + ARG_WIDTH;
 	localparam int unsigned  ROUNDS    = 257;
-
-	typedef logic [N-1:0][ARG_WIDTH-1:0]  args_t;
-	typedef logic [SUM_WIDTH-1:0]  sum_t;
 
 	//-----------------------------------------------------------------------
 	// Global Control
@@ -43,39 +42,67 @@ module add_multi_comp_{label}_tb import mvu_pkg::*;;
 	end
 
 	//-----------------------------------------------------------------------
-	// DUT
-	args_t  arg;
-	sum_t  sum;
-	add_multi_comp_top #(
-		.N(N),
-		.ARG_WIDTH(ARG_WIDTH),
-		.DEPTH(DEPTH)
-	) dut (
-		.clk, .rst,
-		.arg, .sum
+	// DUT: direct compressor instantiation
+	logic [IN_WIDTH-1:0]   in;
+	logic [SUM_WIDTH-1:0]  out;
+
+	{comp_module} dut (
+		.clk,
+		.in,
+		.out
 	);
+
+	//-----------------------------------------------------------------------
+	// Transpose function: convert row-major to column-major format.
+	//
+	// The compressor expects inputs in column-major (bit-slice) order:
+	//   in[0..N-1]       = bit 0 of all N addends
+	//   in[N..2N-1]      = bit 1 of all N addends
+	//   ...
+	//   in[(W-1)*N..W*N-1] = bit W-1 of all N addends
+	//
+	// This matches the transpose in add_multi.sv CATCH_COMP macro:
+	//   assign in[j*N+i] = arg[i][j];
+	//
+	// Without this transpose, addend bits would be misaligned and produce
+	// incorrect sums.
+	//-----------------------------------------------------------------------
+	function automatic logic [IN_WIDTH-1:0] transpose(
+		input logic [IN_WIDTH-1:0] row_major
+	);
+		logic [IN_WIDTH-1:0] col_major;
+		for(int i = 0; i < N; i++) begin
+			for(int j = 0; j < ARG_WIDTH; j++) begin
+				col_major[j*N + i] = row_major[i*ARG_WIDTH + j];
+			end
+		end
+		return col_major;
+	endfunction
 
 	//-----------------------------------------------------------------------
 	// Input Feed
 	int  Q[$];
 	initial begin
-		arg = 'x;
+		in = 'x;
 		@(posedge clk iff !rst);
 
 		repeat(ROUNDS) begin
-			automatic args_t  aa;
+			automatic logic [IN_WIDTH-1:0]  aa;
 			automatic int  exp = 0;
 			void'(std::randomize(aa));
-			for(int unsigned  i = 0; i < N; i++) begin
-				exp += aa[i];
+
+			// Compute expected sum from row-major input
+			for(int unsigned i = 0; i < N; i++) begin
+				exp += aa[i*ARG_WIDTH +: ARG_WIDTH];
 			end
 
-			arg <= aa;
+			// Transpose to column-major before feeding compressor
+			in <= transpose(aa);
 			Q.push_back(exp);
 			@(posedge clk);
 		end
 
-		arg <= 'x;
+		in <= 'x;
 		repeat(DEPTH + 10) @(posedge clk);
 
 		assert(Q.size == 0) else begin
@@ -93,7 +120,7 @@ module add_multi_comp_{label}_tb import mvu_pkg::*;;
 		repeat(DEPTH) @(posedge clk);
 		repeat(ROUNDS) @(posedge clk) begin
 			automatic int  exp = Q.pop_front();
-			automatic int  hav = sum;
+			automatic int  hav = out;
 			assert(hav == exp) else begin
 				$error("Output mismatch %0d instead of %0d.", hav, exp);
 				$stop;

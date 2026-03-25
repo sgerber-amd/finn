@@ -9,8 +9,19 @@ ca="$1"
 
 # PYTHONPATH so python -m finn.compressor.src.* resolves
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FINN_SRC="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+FINN_SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export PYTHONPATH="$FINN_SRC${PYTHONPATH:+:$PYTHONPATH}"
+: "${WORK_DIR:=${FINN_HOST_BUILD_DIR:-/tmp/finn_compressor_tests}}"
+
+if ! command -v vivado >/dev/null 2>&1; then
+	echo "ERROR: vivado not found in PATH." >&2
+	exit 1
+fi
+
+echo "Vivado: $(command -v vivado)"
+echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS WORK_DIR=$WORK_DIR"
+
+source "$SCRIPT_DIR/lib/test_common.sh"
 
 TESTS=(
 	1xu1u1 1xu1s1 1xs1u1 1xs1s1
@@ -31,77 +42,54 @@ TESTS=(
 )
 IFS=$'\n' TESTS=($(sort -r <<<"${TESTS[*]}"))
 
-# Active Workers: PID -> TEST_ID
-declare -A workers
-# Collected Return Codes: TEST_ID -> EXIT_CODE
-declare -A errcodes
-
-# Collect finishing Workers until no more than the passed Limit are active
-function collect_workers {
-	local  pid test code
-	while :; do
-		# Collect finished workers
-		for pid in "${!workers[@]}"; do
-			if ! kill -0 "$pid" 2>/dev/null; then
-				test=${workers["$pid"]}
-				wait "$pid"
-				code=$?
-				errcodes["$test"]="$code"
-				unset  "workers[$pid]"
-
-				echo "- $test -> $code"
-			fi
-		done
-		# Return when done
-		if [ "${#workers[@]}" -le "$1" ]; then return; fi
-		# Pause before going for another sweep
-		sleep 5
-	done
-}
-
-# Start the specified test in a forked worker
-function start_test {
-	echo "+ $1 ..."
-	run_test "$1" &
-	workers[$!]="$1"
-}
-
 function run_test {
-	local  sig=$1
-	local  log
+	local sig="$1"
+	local gen_log comp_log sim_out
 
-	if [ "$KEEP_LOG" -gt 0 ]; then log="comp_$sig.log"; else log="/dev/null"; fi
-	if ! python3 -m finn.compressor.src.dotp "$sig" "$ca" >"$log" 2>&1; then exit 1; fi
+	if [ "$KEEP_LOG" -gt 0 ]; then
+		gen_log="$SCRIPT_DIR/comp_$sig.log"
+		comp_log=(-log "$SCRIPT_DIR/dotp_$sig.log")
+	else
+		gen_log="/dev/null"
+		comp_log=(-nolog)
+	fi
 
-	# Use "^Error: " lines to determine error count
-	if [ "$KEEP_LOG" -gt 0 ]; then log=(-log "dotp_$sig.log"); else log=(-nolog); fi
-	exit "$(vivado "${log[@]}" -nojournal -mode batch -source "gen/dotp_$sig.tcl" 2>&1 | grep -ic '^Error: ')"
+	# Phase 1: Generate compressor
+	if ! python3 -m finn.compressor.src.dotp "$sig" "$ca" >"$gen_log" 2>&1; then
+		echo "ERROR: Generation failed for $sig" >&2
+		return 1
+	fi
+
+	# Phase 2: Run simulation
+	sim_out="$SCRIPT_DIR/gen/dotp_$sig.runner.out"
+	mkdir -p "$WORK_DIR"
+	(cd "$WORK_DIR" && vivado "${comp_log[@]}" -nojournal -mode batch -source "$SCRIPT_DIR/gen/dotp_$sig.tcl" >"$sim_out" 2>&1)
+
+	check_vivado_errors "$sim_out" "$sig"
+	return $?
 }
 
-# Run all available tests and record encountered error counts
-echo -e "Running tests with $MAX_WORKERS parallel workers:\n"
+# Phase 1: Sequential generation
+LABELS=()
+echo -e "Generating configs:\n"
 for test in "${TESTS[@]}"; do
-	# Wait if two many workers already active
-	collect_workers $((MAX_WORKERS - 1))
-	start_test "$test"
+	echo "  $test ..."
+	LABELS+=("$test")
+	if ! python3 -m finn.compressor.src.dotp "$test" "$ca" >/dev/null 2>&1; then
+		echo "ERROR: Generation failed for $test" >&2
+		exit 1
+	fi
 done
-# Wait for all workers to terminate
+echo
+
+# Phase 2: Parallel simulation
+echo -e "Running simulations with $MAX_WORKERS parallel workers:\n"
+for label in "${LABELS[@]}"; do
+	collect_workers $((MAX_WORKERS - 1))
+	start_worker "$label" run_test
+done
 collect_workers 0
 echo
 
-# Print error summary and derive overall exit code
-overall=0
-echo -e "Summary:\n"
-for test in "${TESTS[@]}"; do
-	code="${errcodes[$test]}"
-	if [ "$code" -eq 0 ]; then  msg=$'\e[92;1mPASS\e[0m'
-	else
-		if [ "$code" -gt 1 ]; then  msg='s'; else msg=''; fi
-		msg="$(printf $'\e[91;1mFAIL\e[0m [%u error%s]' "$code" "$msg")"
-		overall=1
-	fi
-	printf ' %-28s - %s\n' "$msg" "$test"
-done
-echo
-
-exit "$overall"
+print_summary
+exit $?

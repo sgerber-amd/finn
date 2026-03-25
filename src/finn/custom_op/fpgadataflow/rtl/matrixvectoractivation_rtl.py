@@ -57,6 +57,9 @@ class MVAU_rtl(MVAU, RTLBackend):
             "comp_module_name": ("s", False, ""),
             # add_multi compressor module names, semicolon-separated
             "add_multi_comp_names": ("s", False, ""),
+            # Force disable LUT-based compressors (for benchmarking/comparison)
+            # 0 = auto (use compressor when eligible), 1 = force disable
+            "noCompressor": ("i", False, 0, {0, 1}),
         }
         my_attrs.update(MVAU.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -166,12 +169,20 @@ class MVAU_rtl(MVAU, RTLBackend):
             mult_dsp = np.ceil(P / 4) * Q
         return int(mult_dsp)
 
-    def instantiate_ip(self, cmd):
-        # instantiate the RTL IP
-        node_name = self.onnx_node.name
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
-        sourcefiles = [
+    def _get_rtl_source_files(self, abspath=True):
+        """
+        Build the list of RTL source files for this node, including any
+        generated compressor files. Used by both instantiate_ip() and
+        get_rtl_file_list() to avoid duplication.
+        """
+        if abspath:
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
+            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+        else:
+            code_gen_dir = ""
+            rtllib_dir = ""
+
+        base_files = [
             "mvu_pkg.sv",
             "mvu_vvu_axi.sv",
             "replay_buffer.sv",
@@ -181,9 +192,9 @@ class MVAU_rtl(MVAU, RTLBackend):
         ]
         sourcefiles = [
             os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
-        ] + [rtllib_dir + _ for _ in sourcefiles]
+        ] + [rtllib_dir + f for f in base_files]
 
-        #Add compressor files if dotp_comp was generated
+        # Add compressor files if dotp_comp was generated
         comp_name = self.get_nodeattr("comp_module_name")
         if comp_name:
             comp_hdl_dir = os.path.join(
@@ -192,10 +203,11 @@ class MVAU_rtl(MVAU, RTLBackend):
             sourcefiles.append(os.path.join(comp_hdl_dir, "mul_comp_map.sv"))
             sourcefiles.append(os.path.join(code_gen_dir, comp_name + ".sv"))
 
-        #Add add_multi compressor files if generated
+        # Add add_multi compressor files if generated
         add_multi_names_str = self.get_nodeattr("add_multi_comp_names")
         if add_multi_names_str:
             add_multi_names = add_multi_names_str.split(";")
+            # Replace shared add_multi.sv with the patched per-node copy
             sourcefiles = [
                 os.path.join(code_gen_dir, "add_multi.sv")
                 if f.endswith("add_multi.sv") else f
@@ -203,6 +215,13 @@ class MVAU_rtl(MVAU, RTLBackend):
             ]
             for name in add_multi_names:
                 sourcefiles.append(os.path.join(code_gen_dir, name + ".sv"))
+
+        return sourcefiles
+
+    def instantiate_ip(self, cmd):
+        # instantiate the RTL IP
+        node_name = self.onnx_node.name
+        sourcefiles = self._get_rtl_source_files(abspath=True)
 
         for f in sourcefiles:
             cmd.append("add_files -norecurse %s" % (f))
@@ -301,6 +320,9 @@ class MVAU_rtl(MVAU, RTLBackend):
         Returns True when: non-pumped, small operands (WW < 4 and AW < 4),
         and target is Versal or 7-Series (not UltraScale+).
         """
+        # Check if compressors are force-disabled (for benchmarking)
+        if self.get_nodeattr("noCompressor"):
+            return False
         if pumped_compute or ww > 4 or aw > 4:
             return False
         dsp_block = get_dsp_block(fpgapart)
@@ -312,8 +334,11 @@ class MVAU_rtl(MVAU, RTLBackend):
         """
         Check if add_multi lane reductions should use LUT compressors.
         Returns True when: not UltraScale+ (version != 2) and SIMD >= 4
-        (below 4 inputs, compressors offer no benefit over binary adder tree). 
+        (below 4 inputs, compressors offer no benefit over binary adder tree).
         """
+        # Check if compressors are force-disabled (for benchmarking)
+        if self.get_nodeattr("noCompressor"):
+            return False
         # version 2 = DSP48E2 (UltraScale+) blocked for same reason as above.
         return version != 2 and simd >= 4
 
@@ -431,48 +456,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         return template_path, code_gen_dict
 
     def get_rtl_file_list(self, abspath=False):
-        if abspath:
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
-        else:
-            code_gen_dir = ""
-            rtllib_dir = ""
-
-        verilog_files = [
-            "mvu_pkg.sv",
-            "mvu_vvu_axi.sv",
-            "replay_buffer.sv",
-            "mvu.sv",
-            "mvu_vvu_8sx9_dsp58.sv",
-            "add_multi.sv",
-        ]
-        verilog_files = [
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
-        ] + [rtllib_dir + _ for _ in verilog_files]
-
-        #Add compressor files if dotp_comp was generated
-        comp_name = self.get_nodeattr("comp_module_name")
-        if comp_name:
-            comp_hdl_dir = os.path.join(
-                os.environ["FINN_ROOT"], "src/finn/compressor/hdl/")
-            verilog_files.append(os.path.join(code_gen_dir, "dotp_comp.sv"))
-            verilog_files.append(os.path.join(comp_hdl_dir, "mul_comp_map.sv"))
-            verilog_files.append(os.path.join(code_gen_dir, comp_name + ".sv"))
-
-        #Add add_multi compressor files if generated
-        add_multi_names_str = self.get_nodeattr("add_multi_comp_names")
-        if add_multi_names_str:
-            add_multi_names = add_multi_names_str.split(";")
-            # Replace shared add_multi.sv with the patched per-node copy
-            verilog_files = [
-                os.path.join(code_gen_dir, "add_multi.sv")
-                if f.endswith("add_multi.sv") else f
-                for f in verilog_files
-            ]
-            for name in add_multi_names:
-                verilog_files.append(os.path.join(code_gen_dir, name + ".sv"))
-
-        return verilog_files
+        return self._get_rtl_source_files(abspath=abspath)
 
     def get_verilog_paths(self):
         verilog_paths = super().get_verilog_paths()
