@@ -20,7 +20,7 @@ import re
 import argparse
 from .main import generate_compressor
 from .utils.mul_comp_map import MulCompMap
-from .target import resolve_target, Target, Versal, SevenSeries
+from .target import resolve_target, resolve_target_name, Target, Versal, SevenSeries
 from .utils.shape import Shape
 from typing import Optional
 
@@ -194,14 +194,7 @@ def main():
     parser.add_argument('--skip-dotp-template', action='store_true',
                         help="Skip expanding dotp_comp template")
     args = parser.parse_args()
-
-    if args.target == "Versal":
-        target = Versal()
-    elif args.target == "7-Series":
-        target = SevenSeries()
-    else:
-        raise ValueError(f"Unsupported target: {args.target}")
-
+    target = resolve_target_name(args.target)
     os.makedirs(args.output_dir, exist_ok=True)
 
     #Compute compressor parameters

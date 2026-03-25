@@ -36,6 +36,21 @@ def resolve_target(fpgapart):
     return SevenSeries()
 
 
+_TARGET_NAMES = {
+    "Versal": lambda: Versal(),
+    "7-Series": lambda: SevenSeries(),
+}
+
+
+def resolve_target_name(name):
+    """Map a CLI target name ('Versal', '7-Series') to a Target object."""
+    factory = _TARGET_NAMES.get(name)
+    if factory is None:
+        raise ValueError(
+            f"Unsupported target: {name!r}. Choose from: {list(_TARGET_NAMES)}")
+    return factory()
+
+
 class Target(ABC):
     counter_candidates: List[CounterCandidate]
     final_adder: FinalAdder

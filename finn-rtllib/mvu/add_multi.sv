@@ -64,13 +64,13 @@ module add_multi import mvu_pkg::*; #(
 
 `define CATCH_COMP(n,w,d) \
 else if(!RESET_ZERO && (N == n) && (ARG_WIDTH == w) && (DEPTH >= d) && (0 <= ARG_LO)) begin : genComp``n``u``w``_d``d \
-	initial $info("Building add_multi(N=%0d, D=%0d, W=%0d) as COMP.", N, DEPTH, ARG_WIDTH); \
+	initial $display("[ADD_MULTI_PATH] COMP N=%0d D=%0d W=%0d", N, DEPTH, ARG_WIDTH); \
 \
 	uwire [N*ARG_WIDTH-1:0]  in; \
 	uwire [SUM_WIDTH  -1:0]  out; \
 	for(genvar  i = 0; i < N; i++) begin : genIn \
 		for(genvar  j = 0; j < ARG_WIDTH; j++) begin : genBit \
-			assign	in[j*N+i] = arg[i][j]; \
+				assign	in[j*N+i] = arg[i][j]; \
 		end : genBit \
 	end : genIn \
 	comp_``n``u``w``_d``d comp_inst ( \
@@ -83,7 +83,7 @@ else if(!RESET_ZERO && (N == n) && (ARG_WIDTH == w) && (DEPTH >= d) && (0 <= ARG
 	localparam int unsigned  SUM_DELAY = DEPTH - COMP_DELAY; \
 	if(SUM_DELAY == 0)  assign  sum = out; \
 	else begin : genDelay \
-		logic [SUM_WIDTH-1:0]  SumZ[SUM_DELAY] = '{ default: 'x }; \
+			logic [SUM_WIDTH-1:0]  SumZ[SUM_DELAY] = '{ default: 'x }; \
 		always_ff @(posedge clk) begin \
 			if(rst)  SumZ <= '{ default: 'x }; \
 			else begin \
@@ -96,6 +96,7 @@ else if(!RESET_ZERO && (N == n) && (ARG_WIDTH == w) && (DEPTH >= d) && (0 <= ARG
 end : genComp``n``u``w``_d``d
 
 	if(0) begin end
+	// FINN_GENERATED_COMP_ENTRIES
 
 //- Generic Behavioral Addition ---------
 	else begin : genGeneric
@@ -107,7 +108,7 @@ end : genComp``n``u``w``_d``d
 		assign	sum0 = arg[0];
 	end : genPassThrough
 	else begin : genTree
-		initial $info("Building add_multi(N=%0d, D=%0d, W=%0d) as TREE.", N, DEPTH, ARG_WIDTH);
+		initial $display("[ADD_MULTI_PATH] TREE N=%0d D=%0d W=%0d", N, DEPTH, ARG_WIDTH);
 		localparam int unsigned  D = L < DEPTH? L : DEPTH;  // Pipeline stages absorbed by tree
 
 		// Compute the count of decendents for all nodes in the reduction trees.

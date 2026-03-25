@@ -2,7 +2,7 @@
 Generate a compressor core for FINN's add_multi module (COMP path).
 
 The add_multi module in mvu.sv reduces N unsigned partial sums of ARG_WIDTH
-bits into a single result.  This script generates a LUT-mapped compressor tree
+bits into a single result (N dsp lanes outputs).  This script generates a LUT-mapped compressor tree
 for a specific (N, ARG_WIDTH) configuration, producing a module that can be
 matched by the CATCH_COMP macro in add_multi.sv.
 
@@ -11,7 +11,7 @@ Unlike dotp_finn.py, no absorption is needed:
   - No constants:   no Baugh-Wooley sign-correction (inputs are unsigned)
   - No accumulation: accumulation stays downstream in mvu.sv
 
-Two invocation modes:
+Two call modes:
 
   Direct mode — caller supplies N and ARG_WIDTH explicitly:
     python add_multi_finn.py --n 32 --arg_width 6 -t Versal -o gen/
@@ -22,15 +22,6 @@ Two invocation modes:
     python add_multi_finn.py --mvu --n 8 --version 2 --ww 2 --aw 2 \
         --accu_width 16 --narrow_weights 0 -t Versal -o gen/
 
-Design note (Strategy A — dual implementation with verification):
-  The lo_width computation is replicated here in Python from mvu.sv's
-  sliceLanes() function.  Both implementations must stay in sync.
-  If the Python and SV lo_width computations diverge, the generated
-  compressor's (N, ARG_WIDTH) won't match any CATCH_COMP guard, so
-  add_multi silently falls through to the generic adder tree.
-
-  Strategy B (future): make Python the single source of truth for OFFSETS
-  and pass them as module parameters to mvu.sv, eliminating the duplication.
 
 Outputs:
   comp_<N>u<W>_d<delay>.sv  — the generated compressor core(s)
@@ -46,12 +37,12 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from .main import generate_compressor
-from .target import resolve_target, Versal, SevenSeries
+from .target import resolve_target, resolve_target_name, Versal, SevenSeries
 from .utils.shape import Shape
 
 
 # ---------------------------------------------------------------------------
-# Strategy A: Python replica of mvu.sv::sliceLanes()
+# Python replica of mvu.sv::sliceLanes()
 #
 # This must mirror the SV implementation exactly.  Any change to sliceLanes()
 # in mvu.sv requires updating this function as well.  The $warning guard in
@@ -60,10 +51,9 @@ from .utils.shape import Shape
 # This oustourced computation is required as lane width is relevant to the compressor input Shape and thus needs to be known at generation time.
 #
 # TODO:
-# Strategy for(future improvement): remove sliceLanes() from mvu.sv entirely
+# Strategy for future improvement change (questionable if better): remove sliceLanes() from mvu.sv entirely
 # and have Python compute OFFSETS once, passing them as module parameters.
 # This eliminates the dual-implementation risk but changes the mvu.sv interface.
-# ---------------------------------------------------------------------------
 
 def clog2(n):
     """Ceiling of log2, matching SystemVerilog $clog2 semantics."""
@@ -73,8 +63,8 @@ def clog2(n):
 
 
 def slice_lanes(version, ww, aw, accu_width, narrow_weights):
-    """Compute DSP lane offsets — Python replica of mvu.sv::sliceLanes().
-
+    """
+    Compute DSP lane offsets — Python replica of mvu.sv::sliceLanes().
     Parameters
     ----------
     version : int
@@ -91,8 +81,10 @@ def slice_lanes(version, ww, aw, accu_width, narrow_weights):
     Returns
     -------
     (num_lanes, offsets) : tuple
-        num_lanes : int — number of DSP lanes.
-        offsets   : list[int] — lane boundary positions (length num_lanes+1).
+        num_lanes : int 
+            number of DSP lanes.
+        offsets   : list[int] 
+            lane boundary positions (length num_lanes+1).
     """
     a_width = 25 + 2 * (version > 1)
     p_width = 58 if version == 3 else 48
@@ -121,18 +113,21 @@ def slice_lanes(version, ww, aw, accu_width, narrow_weights):
 
 
 def lo_widths_from_mvu_params(version, ww, aw, accu_width, narrow_weights):
-    """Compute the lo_width for each DSP lane.
+    """
+    Compute the lo_width for each DSP lane.
 
     Returns
     -------
-    list[int] — lo_width for lane 0 .. num_lanes-1.
+    list[int] 
+        lo_width for lane 0 .. num_lanes-1.
     """
     num_lanes, offsets = slice_lanes(version, ww, aw, accu_width, narrow_weights)
     return [offsets[i + 1] - offsets[i] for i in range(num_lanes)]
 
 
 def comp_module_name(n, arg_width, delay):
-    """Return the compressor module name, e.g. 'comp_32u6_d4'.
+    """
+    Return the compressor module name, e.g. 'comp_32u6_d4'.
 
     Encodes:
       N         — number of unsigned addends (= SIMD)
@@ -148,7 +143,8 @@ def comp_module_name(n, arg_width, delay):
 
 def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir,
                             name=None):
-    """Generate a pure multi-input adder compressor (no accumulation).
+    """
+    Generate a multi-input adder compressor (no accumulation).
 
     Parameters
     ----------
@@ -165,8 +161,7 @@ def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir,
         Directory for the generated .sv file.
     name : str or None
         Module name override.  When None (default), the name is derived
-        from (n, arg_width, delay) after generation — but we need delay
-        first, so we generate with a temporary name and rename.
+        from (n, arg_width, delay) after generation.
 
     Returns
     -------
@@ -189,16 +184,16 @@ def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir,
         shape=shape,
         name=tmp_name,
         comb_depth=pipeline_every,
-        accumulate=False,          # Pure adder — no fused accumulation
+        accumulate=False,          # Pure adder , no fused accumulation
         accumulator_width=None,    # Not applicable without accumulation
-        gates=[],                  # No gate absorption — inputs are complete values
-        constants=[],              # No Baugh-Wooley correction — unsigned inputs
+        gates=[],                  # No gate absorption, inputs are complete values
+        constants=[],              # No Baugh-Wooley correction, unsigned inputs
         path=tmp_path,
         test=False,
         enable=False,              # No accumulator registers to initialize
     )
 
-    # Derive final name with delay suffix (unless user overrode the name)
+    # Derive final name with delay suffix 
     if name is not None:
         final_name = name
         final_path = tmp_path
@@ -274,9 +269,12 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
     for (_n, _w), (name, delay) in generated.items():
         catch_lines += "\t`CATCH_COMP(%d,%d,%d)\n" % (_n, _w, delay)
 
-    add_multi_src = add_multi_src.replace(
-        "\tif(0) begin end\n",
-        "\tif(0) begin end\n" + catch_lines)
+    marker = "\t// FINN_GENERATED_COMP_ENTRIES\n"
+    if marker not in add_multi_src:
+        raise RuntimeError(
+            "Cannot find FINN_GENERATED_COMP_ENTRIES marker in add_multi.sv. "
+            "Has the file been modified?")
+    add_multi_src = add_multi_src.replace(marker, catch_lines + marker)
 
     patched_path = os.path.join(output_dir, "add_multi.sv")
     with open(patched_path, "w") as f:
@@ -346,13 +344,7 @@ def main():
             if getattr(args, param) is None:
                 parser.error(f"--mvu requires --{param}")
 
-    if args.target == "Versal":
-        target = Versal()
-    elif args.target == "7-Series":
-        target = SevenSeries()
-    else:
-        raise ValueError(f"Unsupported target: {args.target}")
-
+    target = resolve_target_name(args.target)
     os.makedirs(args.output_dir, exist_ok=True)
 
     if args.mvu:

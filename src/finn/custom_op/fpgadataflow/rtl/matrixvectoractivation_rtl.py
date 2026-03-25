@@ -304,7 +304,8 @@ class MVAU_rtl(MVAU, RTLBackend):
         if pumped_compute or ww > 4 or aw > 4:
             return False
         dsp_block = get_dsp_block(fpgapart)
-        #Compressor LUT mapping exists for DSP58 (Versal) and DSP48E1 (7-Series)
+        # DSP48E2 (UltraScale+) excluded: no compressor target exists for its
+        # CARRY8 primitives — generator only supports Versal and 7-Series.
         return dsp_block in ("DSP58", "DSP48E1")
 
     def _is_add_multi_comp_eligible(self, version, simd):
@@ -313,6 +314,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         Returns True when: not UltraScale+ (version != 2) and SIMD >= 4
         (below 4 inputs, compressors offer no benefit over binary adder tree). 
         """
+        # version 2 = DSP48E2 (UltraScale+) blocked for same reason as above.
         return version != 2 and simd >= 4
 
     def generate_hdl(self, model, fpgapart, clk):
