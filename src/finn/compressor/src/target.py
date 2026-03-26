@@ -76,10 +76,10 @@ class Versal(Target):
 
 class SevenSeries(Target):
     def __init__(self):
-        self.counter_candidates = [FACandidate(), FiveTwoCandidate(), 
+        self.counter_candidates = [FACandidate(), FiveTwoCandidate(),
                                    SixThreeCandidate(), MuxCYAtomCascadeCandidate()]
         self.final_adder = MuxCYTernaryAdder
         self.absorbing_counter_candidates = [
-            SinglePredCandidate,
-            MuxCYPredAdderCandidate
+            SinglePredCandidate(),
+            MuxCYPredAdderCandidate()
         ]
