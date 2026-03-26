@@ -149,8 +149,12 @@ class CompressorConstructor:
         s = GateAbsorbedStage()
         cur_shape = input_shape
         cur_gates = gates[:]
+        iteration_count = 0
         for idx in range(len(input_shape)):
             while cur_shape[idx] > 0:
+                iteration_count += 1
+                if iteration_count > 1000:
+                    raise RuntimeError(f"Infinite loop in construct_absorption_stage: idx={idx}, cur_shape={cur_shape}, absorption_counters={[type(c).__name__ for c in absorption_counters]}")
                 best = self.get_best_inlined_counter(
                     cur_shape[idx:], cur_gates[idx:], absorption_counters)
                 cur_shape = cur_shape - (best.input_shape << idx)

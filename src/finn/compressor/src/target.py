@@ -81,5 +81,6 @@ class SevenSeries(Target):
         self.final_adder = MuxCYTernaryAdder
         self.absorbing_counter_candidates = [
             SinglePredCandidate(),
-            MuxCYPredAdderCandidate()
+            # MuxCYPredAdderCandidate() - build_hardware() not implemented
+            # RippleSumPredAdderCandidate() - TODO: debug infinite loop issue
         ]

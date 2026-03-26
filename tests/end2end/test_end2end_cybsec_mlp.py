@@ -164,6 +164,7 @@ def test_end2end_cybsec_mlp_build(build_board):
     load_test_checkpoint_or_skip(model_file)
     output_dir = make_build_dir("test_end2end_cybsec_mlp_build")
 
+    # Force RTL MVAU implementation instead of HLS
     specialize_layers_config = os.environ["FINN_ROOT"] + "/specialize_layers_config_cybsec_rtl.json"
     cfg = build.DataflowBuildConfig(
         output_dir=output_dir,
@@ -172,6 +173,8 @@ def test_end2end_cybsec_mlp_build(build_board):
         board=build_board,
         shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ,
         specialize_layers_config_file=specialize_layers_config,
+        # RTL MVAU requires standalone thresholds (cannot merge with MatMul)
+        standalone_thresholds=True,
         generate_outputs=[
             build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
             build_cfg.DataflowOutputType.BITFILE,

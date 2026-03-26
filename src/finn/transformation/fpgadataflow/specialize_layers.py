@@ -248,8 +248,8 @@ def _mvu_rtl_possible(n, fpgapart, model):
         weights_min = np.min(weights)
     narrow_weights = False if weights_min == wdt.min() else True
     # if non narrow weights and only DSP48E1 available return False
-    if not narrow_weights and dsp_block == "DSP48E1":
-        return False
+    #if not narrow_weights and dsp_block == "DSP48E1":
+    #    return False
 
     # if none of the above constraints have been triggered
     # we now check if input and weight data types are in range

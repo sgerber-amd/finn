@@ -237,8 +237,8 @@ def main():
     configs = [
         #(16, 16, 4, 8, 1, 1),  # mw, mh, pe, simd, ww, aw - 1-bit (binary)
         (16, 16, 2, 8, 2, 2),  # 2-bit
-        (32, 32, 2, 16, 2, 2),  # Larger 2-bit
-        (16, 16, 2, 8, 4, 4),  # 3-bit (boundary case)
+        #(32, 32, 2, 16, 2, 2),  # Larger 2-bit
+        (16, 16, 2, 8, 4, 4),  # 4-bit (boundary case)
     ]
 
     # Default to FINN_BUILD_DIR/hls_vs_compressor_benchmark

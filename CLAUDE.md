@@ -200,7 +200,7 @@ The compressor-python generator (`src/finn/compressor/`) builds optimized LUT6CY
 - Module signature: `comp_{SIMD}x{s|u}{NA}{s|u}{NB}_a{ACCU_WIDTH}` (e.g., `comp_8xs2s2_a16`)
 - Features: fused accumulation, constant-absorbed Baugh-Wooley correction
 - Entry point: `src/finn/compressor/src/dotp_finn.py`
-- Status: **RTL works, XSim verified (33/33 tests pass), but FINN Python integration incomplete**
+- Status: **Fully integrated** — RTL verified (33/33 XSim tests), Python integration complete
 
 **2. add_multi Compressor Path (DSP Line Adder Replacement):**
 - For configs where DSP path is used, replaces the binary adder tree in `add_multi.sv`
@@ -209,7 +209,7 @@ The compressor-python generator (`src/finn/compressor/`) builds optimized LUT6CY
 - Uses CATCH_COMP macro in `add_multi.sv` to match (N, ARG_WIDTH, DEPTH) and instantiate compressors
 - Module signature: `comp_{N}u{W}_d{D}` (e.g., `comp_5u7_d0`)
 - Entry point: `src/finn/compressor/src/add_multi_finn.py` with `--mvu` mode
-- Status: **RTL works, XSim verified (8/8 configs pass)**
+- Status: **Fully integrated** — RTL verified (8/8 XSim tests), Python integration complete
 
 ### Critical Gating Logic
 
@@ -225,22 +225,31 @@ USE_COMPRESSOR = IS_MVU && !PUMPED_COMPUTE && (WW < 4) && (AW < 4)
 
 **Otherwise:** Standard binary adder tree or DSP path
 
-### Known Integration Issues (CRITICAL)
+### Integration Status
 
-The RTL works in standalone tests, but **FINN Python integration is incomplete**:
+**MVAU (matrixvectoractivation_rtl.py) — Fully integrated:**
+- `$COMP_PIPELINE_DEPTH$` and `$USE_COMPRESSOR$` template variables substituted
+- Generator functions imported: `from finn.compressor import generate_dotp_comp, generate_add_multi_comps`
+- Eligibility checks: `_is_dotp_comp_eligible()` and `_is_add_multi_comp_eligible()`
+- All compressor files added to `instantiate_ip()` and `get_rtl_file_list()`
+- `$COMP_MODULE_NAME$` expansion handled inside `generate_dotp_comp()`
+- add_multi patching handled inside `generate_add_multi_comps()`
 
-1. **matrixvectoractivation_rtl.py** and **vectorvectoractivation_rtl.py** need modifications:
-   - `$COMP_PIPELINE_DEPTH$` template variable not substituted in `prepare_codegen_default()`
-   - `dotp_comp.sv`, `mul_comp_map.sv`, and `comp_<sig>.sv` not in file lists
-   - No generator invocation (need to call `dotp_finn.py` or import `generate_comp_module()`)
-   - No second template expansion for `$COMP_MODULE_NAME$` in `dotp_comp.sv`
-   - For add_multi path: need to call `add_multi_finn.py`, inject CATCH_COMP entries, patch `add_multi.sv`
+**VVU (vectorvectoractivation_rtl.py) — No compressor support (intentional):**
+- VVU has a fundamentally different compute pattern than MVU
+- MVU: all PEs share same activation vector (broadcast), different weight rows
+- VVU: each PE has its own activation AND weight vector (PE-parallel)
+- RTL restriction: VVU always routes to `genINT8` path, never `genCompressor`
+- VVU only supports DSP58 (VERSION=3); blocked on DSP48E1/E2 at RTL level
+- Adding VVU compressor support would require new compressor architecture (PE-independent trees)
 
-2. **Dual-implementation risk** in add_multi path:
-   - `mvu.sv::sliceLanes()` (SystemVerilog) computes lane widths
-   - `add_multi_finn.py::slice_lanes()` (Python) replicates this logic
-   - Must produce identical results or compressor won't match
-   - If divergence occurs, falls back silently to binary tree (safe but loses benefit)
+### Maintenance Concern: Dual slice_lanes Implementation
+
+The add_multi path has a dual-implementation risk:
+- `mvu.sv::sliceLanes()` (SystemVerilog) computes DSP lane widths
+- `add_multi_finn.py::slice_lanes()` (Python) replicates this logic
+
+If these diverge, compressors won't match CATCH_COMP guards and **silently fall back** to binary adder tree. The fallback is functionally correct but loses compressor benefit. Consider adding a consistency test.
 
 
 ### Key Files for Compressor Work
@@ -257,13 +266,35 @@ The RTL works in standalone tests, but **FINN Python integration is incomplete**
 - `finn-rtllib/mvu/add_multi.sv`: Lane reduction with CATCH_COMP macro
 - `finn-rtllib/mvu/mvu.sv`: Contains sliceLanes() function for lane width computation
 
-**Python Integration (needs work):**
-- `src/finn/custom_op/fpgadataflow/rtl/matrixvectoractivation_rtl.py`
-- `src/finn/custom_op/fpgadataflow/rtl/vectorvectoractivation_rtl.py`
+**Python Integration:**
+- `src/finn/custom_op/fpgadataflow/rtl/matrixvectoractivation_rtl.py` — Has full compressor integration
+- `src/finn/custom_op/fpgadataflow/rtl/vectorvectoractivation_rtl.py` — No compressor (different compute pattern)
 
 **Documentation:**
 - `src/finn/compressor/REPORT.md`: Detailed status report (read this for full context)
 - `src/finn/compressor/README.md`: Usage guide
+
+### Compressor Test Commands
+
+```bash
+# Core compressor tests (21 configs)
+cd src/finn/compressor && ./run_tests.sh
+
+# dotp_comp integration tests (8 configs)
+cd finn-rtllib/mvu/tb && ./run_dotp_comp_tests.sh
+
+# MVU integration tests with dotp_comp (4 configs)
+./run_mvu_comp_tests.sh
+
+# add_multi integration tests (8 configs, DSP path)
+./run_mvu_add_multi_comp_tests.sh
+```
+
+### When Compressors Are Used in End-to-End Tests
+
+Your end2end cybersec test with RTL will exercise compressors only if layers have:
+- **dotp_comp path**: WW < 4 AND AW < 4, non-pumped compute, target is Versal or 7-Series (not UltraScale+)
+- **add_multi path**: SIMD >= 4, DSP version != 2 (not UltraScale+)
 
 ## Important Files
 

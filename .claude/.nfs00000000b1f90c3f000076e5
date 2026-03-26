@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r pytest . --include=*.sh --include=Makefile --include=*.yaml --include=*.yml)",
+      "Bash(command -v vivado)",
+      "Bash(vivado -version)",
+      "Bash(./run_tests.sh)"
+    ]
+  }
+}

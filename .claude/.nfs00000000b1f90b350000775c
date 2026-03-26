@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r pytest . --include=*.sh --include=Makefile --include=*.yaml --include=*.yml)",
+      "Bash(command -v vivado)",
+      "Bash(vivado -version)",
+      "Bash(./run_tests.sh)",
+      "Bash(PYTHONPATH=/home/sgerber/test_repos/finn/src python3 -m finn.compressor.src.dotp \"1xu1u1\")",
+      "Bash(cd:*)",
+      "Bash(KEEP_LOG=1 MAX_WORKERS=1 ./run_tests.sh)"
+    ]
+  }
+}
