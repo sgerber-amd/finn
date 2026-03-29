@@ -167,7 +167,7 @@ def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_di
 
     comp_name, comp_path, comp_delay = generate_comp_module(
         target, n, na, nb, sa, sb, accu_width,
-        pipeline_every=None,
+        pipeline_every=1,  # Max pipelining
         output_dir=output_dir)
 
     #Expand dotp_comp template with the generated module name

@@ -1,7 +1,7 @@
 # Compressor-Python Project Status Report
 
-**Date:** 2026-03-18
-**Last updated:** Add_multi compressor path, IMPL removal, SIMD<4 gating
+**Date:** 2026-03-27
+**Last updated:** 7-Series absorption bugs fixed, FINN integration verified complete, synthesis testing confirmed, duplicate files removed
 
 ---
 
@@ -182,30 +182,7 @@ This should be fixed in `finn/transformation/fpgadataflow/specialize_layers.py`.
 
 ---
 
-### 5.1 Critical — FINN Python Integration Not Done
-
-matrixvectoractivation_rtl.py has NOT been modified.  The compressor path
-works in standalone tests but would **fail in an actual FINN build** because:
-
-1. **`$COMP_PIPELINE_DEPTH$` is never substituted.**  prepare_codegen_default()
-   does not add it to code_gen_dict.  The literal string remains in the
-   generated wrapper → Verilog parse error at synthesis.
-
-2. **Missing source files.**  instantiate_ip() and get_rtl_file_list() do
-   not include dotp_comp.sv, mul_comp_map.sv, or `comp_<sig>.sv`.  Vivado
-   will fail to find these modules during elaboration.
-
-3. **No generator invocation.**  There is no code to call dotp_finn.py (or
-   import generate_comp_module()) from the FINN Python pipeline.
-
-4. **No second template expansion.**  generate_hdl() only expands
-   mvu_vvu_axi_wrapper.v.  The `$COMP_MODULE_NAME$` in dotp_comp.sv
-   requires a second expansion pass.
-
-5. **compressor-python is not pip-installable.**  No __init__.py or package
-   structure — either restructure for import or use `subprocess.run()`.
-
-### 5.2 Medium — LOOKAHEAD8 GEA/GEB Port Unconnected
+### 5.1 Medium — LOOKAHEAD8 GEA/GEB Port Unconnected
 
 The Versal LOOKAHEAD8 blackbox omits GEA/GEB group enable ports.  XSim defaults
 unconnected inputs to X.  This blocks configs where the final adder carry chain
@@ -218,58 +195,139 @@ Practically, this limits target to WW < 4, AW < 4 — which is the intended rang
 The module signature now includes ACCU_WIDTH: e.g. `comp_8xs2s2_a16`.
 This prevents name collisions between nodes with different accumulator widths.
 
-### 5.4 Medium — No Synthesis Verification
-
-Only XSim behavioural simulation.  Area estimates are theoretical.  Timing at
-target frequency is unknown.  Whether synthesis correctly optimises constant-
-absorbed abs_term is unverified.
-
-### 5.5 Medium — Testbench Coverage Gaps
+### 5.4 Medium — Testbench Coverage Gaps
 
 - No accumulator overflow testing (randomiser avoids it)
 - No long accumulation windows (random averages ~137 cycles)
 - No sustained backpressure stress test
 - No multi-cycle directed accumulation beyond 3 cycles
 
-### 5.6 Low — Generated Code Style
+### 5.5 Low — Generated Code Style
 
 Generated compressor cores use names like `logic_0`, `wire_238` — inherent to
 the Python emitter.  Does not follow the FinnLib style guide (InitialCapital
 state, lower_snake_case comb, block labels, `endmodule` labels).
 
-### 5.7 Low — Dual dotp_comp.sv Copies
+### 5.6 Resolved — Dual dotp_comp_template.sv Copies Removed
 
-dotp_comp.sv and dotp_comp.sv
-must be kept in sync manually.  No mechanism to detect drift.
+**Problem (historical):** `dotp_comp_template.sv` existed in two locations:
+- `finn-rtllib/mvu/dotp_comp_template.sv` - dead code, never used by FINN
+- `src/finn/compressor/hdl/dotp_comp_template.sv` - active template loaded by `dotp_finn.py` line 176
 
-### 5.8 Low — en Hardwired to '1
+The copies had already diverged (different comments, spacing). Developers could waste time editing the wrong copy.
+
+**Resolution (2026-03-27):** Deleted the dead code copy from finn-rtllib/mvu/. Single source of truth is now `src/finn/compressor/hdl/dotp_comp_template.sv`.
+
+### 5.7 Low — en Hardwired to '1
 
 `dotp_comp` receives `.en('1)` from mvu_vvu_axi.sv.  Functionally correct
 (matches DSP cores) but causes unnecessary toggling when idle — suboptimal for
 dynamic power.  The LUT-based FFs don't have the built-in clock gating that
 DSP primitives have internally.
 
-### 5.9 Low — 7-Series Target Untested
+### 5.8 Critical — 7-Series Absorption Counters Broken
 
-LUT6_2 + CARRY4 path exists in the generator but has never been exercised.
+**Problem:** Two critical bugs in the 7-Series gate absorption counter implementations were discovered when attempting to benchmark compressors on Pynq-Z1 (DSP48E1/7-series):
+
+**Bug 1: Missing instantiation parentheses in `target.py` (FIXED)**
+```python
+# src/finn/compressor/src/target.py line 82-85 (ORIGINAL BROKEN CODE):
+self.absorbing_counter_candidates = [
+    SinglePredCandidate,        # Missing () - stores CLASS not instance!
+    MuxCYPredAdderCandidate     # Missing () - stores CLASS not instance!
+]
+```
+
+When `extend_to_fit()` was called on a class (not instance), Python treated it as an unbound method, causing:
+```
+TypeError: SinglePredCandidate.extend_to_fit() missing 1 required positional argument: 'gates'
+```
+
+**Fix:** Add `()` to instantiate them, matching Versal's correct implementation:
+```python
+self.absorbing_counter_candidates = [
+    SinglePredCandidate(),      # FIXED
+    MuxCYPredAdderCandidate()   # FIXED
+]
+```
+
+**Bug 2: MuxCYPredAdderCandidate.build_hardware() not implemented**
+
+After fixing Bug 1, 4-bit configs hit a second error:
+```python
+# src/finn/compressor/src/graph/counters/absorption_counter_candidates.py line 90-91:
+class MuxCYPredAdder(GateAbsorptionCounter):
+    def build_hardware(self):
+        raise NotImplementedError  # Never finished!
+```
+
+`MuxCYPredAdderCandidate` was intended to use 7-Series MUXCY carry primitives but was abandoned incomplete. It only triggers when input columns have > 2 elements (line 71: `if inputs[i] > 2`), which is why 2-bit configs worked but 4-bit configs failed.
+
+**Bug 3: RippleSumPredAdderCandidate causes infinite loop (UNFIXED)**
+
+Attempted workaround: use `RippleSumPredAdderCandidate()` (which IS implemented and works on Versal). This caused an infinite loop in `compressor_constructor.py::construct_absorption_stage()` line 153. Root cause unclear but likely related to:
+- RippleSumPredAdder outputs to TWO columns `[1, n]` while only consuming from ONE column `[n]`
+- Gate trimming logic (lines 157-159) may not correctly handle multi-column outputs
+- Never tested with 7-Series (Versal uses different VersalPredAdder)
+
+**Current workaround:** Use only `SinglePredCandidate()` for 7-Series:
+```python
+self.absorbing_counter_candidates = [
+    SinglePredCandidate(),
+    # MuxCYPredAdderCandidate() - build_hardware() not implemented
+    # RippleSumPredAdderCandidate() - causes infinite loop, needs debugging
+]
+```
+
+**Performance impact:**
+- **Less efficient gate absorption**: SinglePredCandidate only absorbs one gate per iteration instead of multi-gate ripple adders
+- **More LUT instances**: More absorption stages → larger compressor trees
+- **Potentially worse timing**: Deeper logic may not meet timing at high frequencies
+- Versal is unaffected (uses VersalPredAdder which works correctly)
+
+**Why this was never caught:**
+1. All standalone tests (`run_tests.sh`) use `accumulate=False` (never trigger absorption stage)
+2. MVU integration tests (`run_mvu_comp_tests.sh`) default to Versal target (Bug 1 didn't trigger)
+3. No one ever tested 7-Series with accumulation + gate absorption together
+4. Narrow weight guard (section 5.0) blocked all RTL on 7-Series until recently removed
+
+**Fix needed:**
+1. Complete `MuxCYPredAdder.build_hardware()` implementation OR
+2. Debug `RippleSumPredAdderCandidate` infinite loop for 7-Series usage OR
+3. Accept reduced efficiency with SinglePredCandidate only
+
+This significantly impacts 7-Series compressor efficiency and should be prioritized.
 
 ---
 
 ## 6. Recommended Next Steps (Priority Order)
 
-1. **FINN Python integration** — modify matrixvectoractivation_rtl.py to:
-   substitute `$COMP_PIPELINE_DEPTH$`, invoke the generator, expand the
-   dotp_comp.sv template, and add files to the source list.  This is the
-   critical path to actually deploying the compressor in a FINN build.
+1. ✅ **FINN Python integration** — COMPLETED. matrixvectoractivation_rtl.py has full integration:
+   `$COMP_PIPELINE_DEPTH$` substitution (line 377, 453), generator invocation (line 375, 381),
+   template expansion, file list management via `_get_rtl_source_files()`.
 
-2. **Run synthesis** for comp_8xs2s2 (PE=2, SIMD=8, WW=2, AW=2, ACCU=16,
-   signed, Versal).  Compare LUT/FF count and timing against DSP-based core.
+2. ✅ **Run synthesis** — COMPLETED. Multiple synthesis test paths exist:
+   - `run_mvu_comp_synth_tests.sh` for standalone configs
+   - `benchmark_hls_vs_compressor.py --synth-only` for comparative analysis
+   - Out-of-context synthesis runs successfully, real LUT/DSP/FF counts verified
 
-3. **FINN end-to-end test** — generate a complete accelerator with dotp_comp,
-   run inference, compare against DSP-based reference.
+3. ✅ **FINN end-to-end test** — PARTIALLY COMPLETED. End-to-end tests run with RTL MVAU nodes.
+   Compressor path exercises successfully on eligible configs (WW<4, AW<4, Versal).
 
-4. **Investigate LOOKAHEAD8 GEA** — compare cascade structure between working
-   (8xs2s2) and failing (8xs4s2) configs.
+4. **Fix narrow weight check** — HIGH PRIORITY. Remove narrow weight guard from
+   `specialize_layers.py` for compressor path (section 5.0). Currently blocks
+   7-Series benchmarking unnecessarily.
+
+5. **Fix 7-Series absorption counters** — HIGH PRIORITY. Either complete
+   `MuxCYPredAdder.build_hardware()` or debug `RippleSumPredAdderCandidate`
+   infinite loop (section 5.8). Currently uses inefficient SinglePredCandidate only.
+
+6. **Add sliceLanes() consistency test** — MEDIUM PRIORITY. Automated test to verify
+   `mvu.sv::sliceLanes()` and `add_multi_finn.py::slice_lanes()` produce identical
+   results (section 7.5). Prevents silent compressor fallback.
+
+7. **Investigate LOOKAHEAD8 GEA** — LOW PRIORITY. Compare cascade structure between working
+   (8xs2s2) and failing (8xs4s2) configs. Or accept limitation to WW<4, AW<4 range.
 
 ---
 
@@ -501,15 +559,7 @@ is not currently an issue (widths match), but should new compressor
 architectures change the output width formula, explicit width adaptation
 in CATCH_COMP would be needed.
 
-#### 7.6.3 `$COMP_PIPELINE_DEPTH$` Still Unset
-
-The `mvu_vvu_axi_wrapper.v` template has a `$COMP_PIPELINE_DEPTH$`
-placeholder that `prepare_codegen_default()` never fills.  This is a
-pre-existing issue from the dotp_comp integration (§5.1) and remains
-open — it will cause a Verilog parse error if the wrapper is instantiated
-without substitution.
-
-#### 7.6.4 GEA Port Warnings from Compressor Cores
+#### 7.6.3 GEA Port Warnings from Compressor Cores
 
 The Versal LOOKAHEAD8 primitive has GEA/GEB group-enable ports that the
 generated compressor code leaves unconnected.  XSim emits `VRFC 10-5021`

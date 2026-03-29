@@ -317,7 +317,7 @@ class MVAU_rtl(MVAU, RTLBackend):
     def _is_dotp_comp_eligible(self, fpgapart, ww, aw, pumped_compute):
         """
         Check if LUT-based compressor should replace the DSP compute path.
-        Returns True when: non-pumped, small operands (WW < 4 and AW < 4),
+        Returns True when: non-pumped, small operands (WW <= 4 and AW <= 4),
         and target is Versal or 7-Series (not UltraScale+).
         """
         # Check if compressors are force-disabled (for benchmarking)

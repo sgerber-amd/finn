@@ -83,3 +83,169 @@ def out_of_context_synth(
     else:
         ret["fmax_mhz"] = 1000.0 / (clk_period_ns - ret["WNS"])
     return ret
+
+
+def timing_closure_search_from_synth(
+    vivado_proj_folder,
+    top_name,
+    clk_name="ap_clk",
+    clk_period_ns_min=1.0,
+    clk_period_ns_max=100.0,
+):
+    """Run binary search for timing closure on an already-synthesized design.
+
+    This is more efficient than timing_closure_search() when synthesis was
+    already performed (e.g., by out_of_context_synth()). Reuses the existing
+    synthesized netlist and only iterates implementation.
+
+    Parameters
+    ----------
+    vivado_proj_folder : str
+        Path to existing results_<top_name> directory from out_of_context_synth()
+    top_name : str
+        Top-level module name (not used, kept for API consistency)
+    clk_name : str, optional
+        Clock port name (default: ap_clk)
+    clk_period_ns_min : float, optional
+        Minimum (aggressive) clock period to test in ns (default: 1.0)
+    clk_period_ns_max : float, optional
+        Maximum (conservative) clock period to test in ns (default: 100.0)
+
+    Returns
+    -------
+    dict
+        Same as timing_closure_search() - includes achieved_fmax_mhz, etc.
+
+    Notes
+    -----
+    - Expects vivado_proj_folder to contain vivadocompile/ project directory
+    - Synthesis must have already completed (synth_1 run must exist)
+    - Much faster than timing_closure_search() - skips ~10-20 min synthesis step
+    """
+    import subprocess
+
+    # ensure that vivado is in PATH
+    if which("vivado") is None:
+        raise Exception("vivado is not in PATH, ensure settings64.sh is sourced.")
+
+    # Create TCL script for binary search (assumes synthesis already done)
+    tcl_script = os.path.join(vivado_proj_folder, "timing_search_resume.tcl")
+
+    with open(tcl_script, "w") as f:
+        f.write(f"""# Resume timing search from existing synthesis
+# Open existing project
+open_project {vivado_proj_folder}/vivadocompile/vivadocompile.xpr
+
+# Verify synthesis run exists
+if {{[get_runs synth_1] == ""}} {{
+    puts "ERROR: synth_1 run not found. Run synthesis first."
+    exit 1
+}}
+
+# Binary search parameters
+set clk_name "{clk_name}"
+set tm {clk_period_ns_min}
+set ts {clk_period_ns_max}
+set tt [expr ($tm + $ts) / 2.0]
+
+puts "INFO: Resuming timing search from existing synthesis"
+puts "INFO: Clock name: $clk_name"
+puts "INFO: Initial bounds: \\[$tm ns : $ts ns\\]"
+
+# Open synthesized design
+open_run synth_1
+
+# Create tmp.xdc for dynamic constraints
+close [open tmp.xdc w]
+set constr_set [current_fileset -constrset]
+add_files -fileset $constr_set tmp.xdc
+set_property target_constrs_file tmp.xdc $constr_set
+close_design
+
+# Binary search loop
+set timf [open "timing_resume.log" w]
+set iteration 0
+
+while {{[expr $ts - $tm] > 0.1}} {{
+    incr iteration
+
+    close [open tmp.xdc w]
+    open_run synth_1
+    create_clock -name clk -period $tt [get_ports $clk_name]
+    save_constraints -force
+    close_design
+
+    reset_run impl_1
+    puts -nonewline $timf "# Iteration $iteration: Testing period $tt ns (\\[$tm : $ts\\]) -> "
+    flush $timf
+
+    puts "INFO: Iteration $iteration: Testing period $tt ns"
+    launch_runs impl_1 -jobs 8
+    wait_on_runs impl_1
+    open_run impl_1
+
+    set wns [get_property SLACK [get_timing_paths]]
+    close_design
+
+    puts $timf "WNS = $wns ns"
+    flush $timf
+    puts "INFO: WNS = $wns ns"
+
+    if {{ $wns < 0 }} {{
+        set tm $tt
+        puts "INFO: Timing FAILED, increasing period"
+    }} else {{
+        set ts $tt
+        puts "INFO: Timing PASSED, decreasing period"
+    }}
+
+    set tt [expr {{max((4*$tm+$ts)/5.0, min($tt-$wns, ($tm+$ts)/2.0))}}]
+}}
+
+puts $timf "\\n=== TIMING CLOSURE ACHIEVED ==="
+puts $timf "Achieved period: $ts ns"
+puts $timf "Achieved fmax: [expr 1000.0 / $ts] MHz"
+puts $timf "Total iterations: $iteration"
+close $timf
+
+# Extract resources from final implementation
+open_run impl_1
+set util [report_utilization -return_string]
+set util_lut [exec echo $util | grep LUT | head -n 1 | cut -d| -f3 | tr -d " "]
+set util_ff [llength [get_cells -hier -filter {{PRIMITIVE_TYPE =~ *.F*E*}}]]
+set time_wns [get_property SLACK [get_timing_paths]]
+
+# Write results
+set fp [open "res_timing.txt" w]
+puts $fp "achieved_period_ns=$ts"
+puts $fp "achieved_fmax_mhz=[expr 1000.0 / $ts]"
+puts $fp "wns_at_closure=$time_wns"
+puts $fp "iterations=$iteration"
+puts $fp "LUT=$util_lut"
+puts $fp "FF=$util_ff"
+close $fp
+
+puts "INFO: Results written to res_timing.txt"
+exit
+""")
+
+    # Run Vivado with the script
+    cmd = ["vivado", "-mode", "batch", "-source", tcl_script]
+    subprocess.run(cmd, cwd=vivado_proj_folder, check=True)
+
+    # Parse results
+    res_path = os.path.join(vivado_proj_folder, "res_timing.txt")
+    with open(res_path, "r") as f:
+        res_data = f.read().split("\n")
+
+    ret = {}
+    for res_line in res_data:
+        if "=" in res_line:
+            key, val = res_line.split("=")
+            try:
+                ret[key] = float(val)
+            except ValueError:
+                ret[key] = 0
+
+    ret["vivado_proj_folder"] = vivado_proj_folder
+    return ret
