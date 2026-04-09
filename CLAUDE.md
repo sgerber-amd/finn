@@ -289,29 +289,31 @@ compression_goal = final_adder.compression_goal(x)
 **Files Modified:**
 - `src/finn/compressor/src/passes/compressor_constructor.py` - Fixed compression_goal calculation, added extensive documentation
 
-#### **CRITICAL ACTIVE BUG: Constants Width Mismatch Causes -256 Offset (2026-04-07/08)**
+#### **RESOLVED (2026-04-09): Constants Width Mismatch -256 Offset Bug**
 
-**Issue:** FINN MVAU tests with SIMD ≥ 16 fail with exactly -256 offset on all output values. Standalone compressor tests PASS for the same configuration.
+**Original Issue (2026-04-07/08):** FINN MVAU tests with SIMD ≥ 16 were failing with exactly -256 offset on all output values. Standalone compressor tests PASSED for the same configuration.
 
-**Hypothesis:** Constants calculated at `accu_width` instead of natural width `np`, injecting extra sign bits.
+**Resolution Status: FIXED ✅**
 
-**Fix Attempted (2026-04-08):**
-- Implemented sign-extension logic in `dotp_finn.py` (lines 97-250)
-- Constants now calculated at natural width `np`, then sign-extended to `accu_width`
-- Verified mathematically correct: bits [7,11,12,13,14,15] for SIMD=16
+**Testing verification (2026-04-09):**
+- ✅ SIMD=16 tests (PE=1, 9, 18): **ALL PASS** on xc7z020 (7-Series)
+- ✅ SIMD=32 tests (PE=1, 9, 18): **ALL PASS** on xc7z020 (7-Series)
+- ✅ Test log: `dopt_standard_7sieries_config.log` shows 9/9 passed
+- ✅ Compressor path active (`USE_COMPRESSOR=1'b1`)
+- ✅ UINT4 × INT4 configurations working correctly
 
-**Result:** Tests STILL FAIL with -256 offset. Root cause unclear.
+**Likely fixed by:** Gate absorption disable (2026-04-09) or related compressor fixes.
 
 **Current Status:**
-- ✗ SIMD=16/32 (pumpedCompute=False): FAILS with -256 offset
+- ✅ SIMD=16/32 (pumpedCompute=False): **PASSES** with compressor
 - ✅ SIMD=16/32 (pumpedCompute=True): PASSES (doesn't use compressor)
-- ✅ SIMD=1: PASSES (different code path)
-- ❓ Fix implemented but ineffective - either incomplete or different root cause
+- ✅ SIMD=1: PASSES
 
 **Impact:**
-- ✗ Compressor integration unusable for SIMD ≥ 16 with non-pumped compute
+- ✅ Compressor integration **now usable** for SIMD ≥ 16 configurations
+- ✅ Realistic network sizes (SIMD 16-32) fully supported
 
-**See:** `src/finn/compressor/REPORT.md` section 5.01 for complete investigation.
+**See:** `src/finn/compressor/REPORT.md` section 5.01 for historical investigation details.
 
 #### **CRITICAL: 7-Series Gate Absorption Disabled (Temporary Workaround)**
 

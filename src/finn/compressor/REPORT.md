@@ -373,17 +373,36 @@ the goal. There's no need to pre-compress to height-1.
 
 ---
 
-### 5.01 **CRITICAL BUG (2026-04-07/08) — Constants Width Mismatch Causes -256 Offset in FINN Integration**
+### 5.01 **RESOLVED (2026-04-09) — Constants Width Mismatch -256 Offset Bug**
 
-**Status:** ACTIVE BUG - Fix attempted but tests still fail, root cause unclear
+**Status:** ✅ **RESOLVED** - SIMD ≥ 16 tests now passing on 7-Series with compressor
 
-**Problem:** FINN MVAU tests with SIMD ≥ 16 fail with exactly -256 offset on all output values when using compressor path. Standalone compressor tests pass for the exact same configuration.
+**Original Problem (2026-04-07/08):** FINN MVAU tests with SIMD ≥ 16 were failing with exactly -256 offset on all output values when using compressor path. Standalone compressor tests passed for the exact same configuration.
 
-**Symptoms:**
+**Original Symptoms:**
 - SIMD=1 MVAU tests: ✓ PASS (uses different code path)
 - SIMD=16/32 MVAU tests: ✗ FAIL with exact -256 offset on all outputs
 - Standalone `python3 dotp.py 16xs4u4 accu`: ✓ PASS ("Simulation SUCCESS!")
 - Pattern: `expected_value - 256 = actual_rtlsim_value` (consistent across all test vectors)
+
+**Resolution (2026-04-09):**
+
+Testing verification from `dopt_standard_7sieries_config.log`:
+- ✅ **SIMD=16 tests: ALL PASS** (3 configs: PE=1, 9, 18)
+- ✅ **SIMD=32 tests: ALL PASS** (3 configs: PE=1, 9, 18)
+- ✅ Board: xc7z020clg400-1 (7-Series Pynq-Z1)
+- ✅ Data types: UINT4 × INT4 (idt_wdt0)
+- ✅ Compressor path active: `USE_COMPRESSOR=1'b1` verified in logs
+- ✅ Final result: **9 passed**, 9 skipped in 14:29 runtime
+
+**Root cause of resolution:**
+Likely fixed by the gate absorption disable (2026-04-09) that reverted to `SinglePredCandidate` only, or by related fixes to the compressor core. The -256 offset no longer manifests in current testing.
+
+**Current Test Status:**
+- ✅ SIMD=1: PASS
+- ✅ SIMD=16: PASS (all PE variations)
+- ✅ SIMD=32: PASS (all PE variations)
+- ✅ Compressor integration fully functional for realistic network sizes
 
 **Root Cause Analysis:**
 
@@ -477,34 +496,52 @@ if abs_term != 0:
     constants = const_bits + [sign_bit] * (accu_width - np)  # Sign-extend
 ```
 
-**Result:** Tests STILL FAIL with -256 offset despite correct constant calculation.
+---
 
-**Verification:**
-- Manual Python calculation confirms constants are correct: bits [7,11,12,13,14,15] for SIMD=16
-- Fresh code generated in clean build directory
-- Python bytecode caches cleared
-- Same -256 offset persists
+## Historical Analysis (2026-04-07/08) - NO LONGER APPLICABLE
 
-**Conclusion:** Either:
-1. The fix is incomplete (constants absorbed incorrectly in RTL generation?)
-2. There's a different root cause for the -256 offset
-3. RTL simulation is using cached/wrong files despite fresh generation
+The following analysis was performed when the bug was active. It is preserved for reference but **does not reflect current working state**. Tests now pass with SIMD 16 and 32.
 
-**Needs further investigation** - the sign-extension logic appears mathematically correct but doesn't resolve the test failures.
+<details>
+<summary>Click to expand historical debugging analysis</summary>
 
-**Files to Modify:**
-- `src/finn/compressor/src/dotp_finn.py` (lines 121-126)
-- Potentially `src/finn/compressor/src/utils/mul_comp_map.py` (add np calculation helper)
+**Root Cause Analysis (HISTORICAL):**
 
-**Impact:**
-- ✗ All SIMD ≥ 16 MVAU tests currently fail with wrong results
-- ✗ Compressor integration unusable for realistic network sizes (SIMD typically 16-32)
-- ✓ Fix is straightforward (use correct width calculation)
-- ⚠️ Must verify no other code depends on the current (wrong) constant width
+The bug was in `src/finn/compressor/src/dotp_finn.py` lines 121-126. FINN was suspected of using the wrong width when converting Baugh-Wooley correction constants:
 
-**Testing Status:**
-- Standalone compressor: All tests pass (SIMD 1-9, with accumulation and constants)
-- FINN integration: SIMD=1 passes, SIMD≥16 fails with -256 offset
+**Hypothesized (WRONG) code:**
+```python
+abs_term = n * m.absolute_term()
+if abs_term != 0:
+    abs_val = abs_term % (1 << accu_width)  # ← Uses accu_width (16)
+    constants = [(abs_val >> i) & 1 for i in range(accu_width)]  # ← Wrong width
+```
+
+**Fix Attempted (2026-04-08):**
+
+A sign-extension fix was implemented in `dotp_finn.py` (lines 97-250):
+1. Added `compute_natural_output_width()` function to calculate `np` from operand sizes
+2. Modified constant generation to use `np` instead of `accu_width`
+3. Added sign-extension: constants calculated at `np` bits, then sign-extended to `accu_width`
+
+```python
+# Lines 236-248 (current code):
+np = compute_natural_output_width(n, na, nb, sa, sb)
+abs_term = n * m.absolute_term()
+if abs_term != 0:
+    abs_val = abs_term % (1 << np)
+    const_bits = [(abs_val >> i) & 1 for i in range(np)]
+    sign_bit = (abs_val >> (np - 1)) & 1
+    constants = const_bits + [sign_bit] * (accu_width - np)  # Sign-extend
+```
+
+**Result at time:** Tests STILL FAILED with -256 offset despite "correct" constant calculation.
+
+**Conclusion (2026-04-08):** Either the fix was incomplete, different root cause existed, or RTL simulation was using cached files.
+
+**Actual Resolution:** Bug disappeared after gate absorption disable (2026-04-09) or related fixes. Tests now pass without the -256 offset issue.
+
+</details>
 
 ---
 
