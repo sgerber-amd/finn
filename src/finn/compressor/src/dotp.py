@@ -1,4 +1,4 @@
-import sys, re
+import sys, re, os
 from .main import generate_compressor
 from .target import Target, Versal, SevenSeries
 from .utils.shape import Shape
@@ -35,6 +35,9 @@ if __name__ == "__main__":
 		abs_term  = 0
 
 	name = "comp_" + sig
+	# Write to gen/ relative to this script's parent directory (compressor/)
+	script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	output_path = os.path.join(script_dir, "gen", name + ".sv")
 	generate_compressor(
 		target            = SevenSeries(),  # Changed to test 7-Series gate absorption
 		shape             = Shape((len(col) for col in shape)),
@@ -44,15 +47,20 @@ if __name__ == "__main__":
 		accumulator_width = None,
 		gates = [[f"{val:x}" for val in col] for col in shape],
 		constants = constants,
-		path = "gen/" + name + ".sv",
+		path = output_path,
 		test = False
 	)
 
-	for (src, dst) in (
-		("hdl/dotp_template.sv", "gen/dotp_"+sig+".sv"),
-		("hdl/dotp_tb_template.sv", "gen/dotp_"+sig+"_tb.sv"),
-		("hdl/dotp_template.tcl", "gen/dotp_"+sig+".tcl")
+	# Process templates with absolute paths
+	gen_dir = os.path.join(script_dir, "gen")
+	hdl_dir = os.path.join(script_dir, "hdl")
+	for (src_rel, dst_rel) in (
+		("dotp_template.sv", "dotp_"+sig+".sv"),
+		("dotp_tb_template.sv", "dotp_"+sig+"_tb.sv"),
+		("dotp_template.tcl", "dotp_"+sig+".tcl")
 	):
+		src = os.path.join(hdl_dir, src_rel)
+		dst = os.path.join(gen_dir, dst_rel)
 		with open(src, "rt") as fsrc:
 			with open(dst, "wt") as fdst:
 				for l in fsrc:
@@ -65,4 +73,7 @@ if __name__ == "__main__":
 						.replace("{signed_a}", str(int(sa)))
 						.replace("{signed_b}", str(int(sb)))
 						.replace("{abs_term}", str(abs_term))
+						# Replace relative paths with absolute paths for TCL
+						.replace("hdl/", hdl_dir + "/")
+						.replace("gen/", gen_dir + "/")
 					)
