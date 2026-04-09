@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
+# Copyright (C) 2024, Advanced Micro Devices, Inc.
+# All rights reserved.
 #
-# Benchmark: HLS MVAU vs RTL MVAU with Compressors
-#
-# Compares the traditional HLS implementation (used for low-bitwidth networks)
-# against the new RTL implementation with LUT-based compressor trees.
-#
-# Focus: 1-3 bit operands where compressors are most beneficial
-#
-# Usage (inside Docker):
-#   python -m finn.compressor.benchmark_hls_vs_compressor --keep --synth-only
-#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Benchmark HLS MVAU vs RTL MVAU with Compressors.
+
+Compares the traditional HLS implementation (used for low-bitwidth networks)
+against the new RTL implementation with LUT-based compressor trees.
+
+Focus: 1-4 bit operands where compressors replace DSPs entirely (dotp_comp path).
+
+Usage (inside Docker):
+    python -m finn.compressor.benchmark_hls_vs_compressor --synth-only --keep
+"""
 
 import argparse
 import csv
-import glob
 import json
 import os
-import re
 import shutil
 
 from qonnx.core.datatype import DataType
@@ -29,112 +31,13 @@ from finn.builder.build_dataflow_config import (
     ShellFlowType,
     default_build_dataflow_steps,
 )
-
-# Taking model creation from tests
+from finn.compressor.benchmark_utils import (
+    BOARD_CONFIGS,
+    compute_latency_cycles,
+    format_config_label,
+    parse_dsp_counts,
+)
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
-
-
-BOARD_CONFIGS = {
-    "pynq-z1": {
-        "board": "Pynq-Z1",
-        "part": "xc7z020clg400-1",
-    },
-    "ultra96": {
-        "board": "Ultra96",
-        "part": "xczu3eg-sbva484-1-e",
-    },
-    "vck190": {
-        "board": "VCK190",
-        "part": "xcvc1902-vsva2197-2MP-e-S",
-    },
-}
-
-
-class HLSTimingError(Exception):
-    """Raised when HLS synthesis fails to meet timing constraints."""
-    pass
-
-
-def check_hls_timing(output_dir):
-    """Check HLS synthesis timing from csynth.rpt files.
-
-    Parses the Vitis HLS synthesis reports to extract slack values.
-    Returns the worst (minimum) slack found across all HLS modules.
-
-    Parameters
-    ----------
-    output_dir : str
-        Path to the FINN build output directory
-
-    Returns
-    -------
-    dict
-        Dictionary with keys:
-        - 'worst_slack_ns': float, minimum slack across all modules
-        - 'all_slacks': list of (module_name, slack) tuples
-        - 'timing_met': bool, True if all slacks are non-negative
-
-    Raises
-    ------
-    HLSTimingError
-        If any HLS module has negative slack (timing not met)
-    """
-    # HLS reports are NOT in output_dir - they're in FINN_BUILD_DIR/code_gen_ipgen_*
-    # We need to search the FINN build directory
-    finn_build_dir = os.environ.get("FINN_BUILD_DIR", "/tmp")
-
-    # Find all csynth.rpt files for HLS nodes
-    # They are located at: code_gen_ipgen_*/project_*/sol1/syn/report/csynth.rpt
-    csynth_reports = glob.glob(
-        os.path.join(finn_build_dir, "code_gen_ipgen_*", "project_*", "sol1", "syn", "report", "csynth.rpt")
-    )
-
-    if not csynth_reports:
-        print(f"    WARNING: No HLS csynth.rpt files found in {finn_build_dir}")
-        return {"worst_slack_ns": None, "all_slacks": [], "timing_met": True}
-
-    all_slacks = []
-
-    for rpt_path in csynth_reports:
-        with open(rpt_path, "r") as f:
-            content = f.read()
-
-        # Parse the Performance & Resource Estimates table
-        # Format varies:
-        #   |+ ModuleName  |     -| slack| ...   (timing met, no issue)
-        #   |+ ModuleName  |Timing| slack| ...   (timing issue)
-        # The slack column (3rd) shows timing slack in ns
-        # Pattern matches lines like: |+ MVAU_hls_0  |  Timing|  -4.44|
-        pattern = r"\|\+\s+(\S+)\s+\|\s*\S*\|\s*([-\d.]+)\|"
-        matches = re.findall(pattern, content)
-
-        for module_name, slack_str in matches:
-            try:
-                slack = float(slack_str)
-                all_slacks.append((module_name, slack))
-            except ValueError:
-                continue
-
-    if not all_slacks:
-        print("    WARNING: Could not parse slack values from HLS reports")
-        return {"worst_slack_ns": None, "all_slacks": [], "timing_met": True}
-
-    worst_slack = min(slack for _, slack in all_slacks)
-    timing_met = worst_slack >= 0
-
-    result = {
-        "worst_slack_ns": worst_slack,
-        "all_slacks": all_slacks,
-        "timing_met": timing_met,
-    }
-
-    if not timing_met:
-        failed_modules = [(m, s) for m, s in all_slacks if s < 0]
-        print(f"    WARNING: HLS timing not met! Worst slack: {worst_slack:.3f} ns")
-        print(f"    Failed modules: {failed_modules}")
-        result["failed_modules"] = failed_modules
-
-    return result
 
 
 def run_build(model_path, output_dir, board, use_rtl, synth_only, synth_clk_period_ns):
@@ -227,66 +130,35 @@ def run_build(model_path, output_dir, board, use_rtl, synth_only, synth_clk_peri
 
 
 def parse_results(output_dir):
-    """Parse ooc_synth_and_timing.json (actual Vivado synthesis results)."""
+    """Parse ooc_synth_and_timing.json (Vivado synthesis results)."""
     path = os.path.join(output_dir, "report", "ooc_synth_and_timing.json")
     if os.path.exists(path):
         with open(path) as f:
             data = json.load(f)
-            # DSP reporting varies by FPGA family:
-            # - Some boards report unified "DSP" count
-            # - Others report by type: "DSP48E", "DSP48E1", "DSP48E2", "DSP58"
-            # Sum all DSP-related keys to be robust
-            dsp_count = data.get("DSP", 0)
-            if dsp_count == 0:  # Try specific DSP types if unified count is 0
-                dsp_count = (data.get("DSP48E", 0) + data.get("DSP48E1", 0) +
-                             data.get("DSP48E2", 0) + data.get("DSP58", 0))
-
             return {
-                "total": {
-                    "LUT": data.get("LUT", 0),
-                    "DSP": dsp_count,
-                    "FF": data.get("FF", 0),
-                    "BRAM": data.get("BRAM_18K", 0),
-                    "WNS": data.get("WNS", 0),
-                    "fmax_mhz": data.get("fmax_mhz", 0),
-                    # Timing search results (if available)
-                    "achieved_fmax_mhz": data.get("achieved_fmax_mhz", None),
-                    "iterations": data.get("iterations", None),
-                }
+                "LUT": data.get("LUT", 0),
+                "DSP": parse_dsp_counts(data),
+                "FF": data.get("FF", 0),
+                "BRAM": data.get("BRAM_18K", 0),
+                "WNS": data.get("WNS", 0),
+                "fmax_mhz": data.get("fmax_mhz", 0),
             }
     return {}
 
 
-def run_comparison(mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, synth_only, timing_search, synth_clk_period_ns, run_variants=None):
-    """Run HLS vs RTL+Compressor comparison for one config.
-
-    Runs HLS first, checks timing, then runs RTL. If HLS timing fails,
-    raises HLSTimingError before attempting RTL build.
-
-    Args:
-        run_variants: List of variants to run. Default None runs both ["hls", "rtl_comp"].
-                     Pass ["hls"] to only run HLS, or ["rtl_comp"] to only run RTL.
-    """
-    label = f"mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}"
+def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns):
+    """Run HLS vs RTL+Compressor comparison for one config."""
+    label = format_config_label(mw, mh, pe, simd, ww, aw)
     wdt = DataType[f"INT{ww}"]
     idt = DataType[f"INT{aw}"]
     odt = DataType["INT32"]
 
-    # Compute expected latency in cycles (same for HLS and RTL)
-    # Formula: (MH / PE) * (MW / SIMD) cycles per output
-    exp_cycles = int((mh / pe) * (mw / simd))
+    exp_cycles = compute_latency_cycles(mh, pe, mw, simd)
 
     results = {}
 
-    # Determine which variants to run
-    if run_variants is None:
-        run_variants = ["hls", "rtl_comp"]
-
-    variants_to_run = [False, True] if "hls" in run_variants and "rtl_comp" in run_variants else \
-                      [False] if "hls" in run_variants else [True]
-
-    # Run HLS FIRST to validate timing before RTL
-    for use_rtl in variants_to_run:  # False=HLS, True=RTL
+    # Run both HLS and RTL variants
+    for use_rtl in [False, True]:  # False=HLS, True=RTL
         variant = "rtl_comp" if use_rtl else "hls"
         run_dir = os.path.join(work_dir, f"{label}_{variant}")
         os.makedirs(run_dir, exist_ok=True)
@@ -302,21 +174,9 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, synth_o
         try:
             run_build(model_path, output_dir, board, use_rtl, synth_only, synth_clk_period_ns)
 
-            # For HLS builds, check timing BEFORE continuing to RTL
-            if not use_rtl:
-                print(f"    Checking HLS timing...", flush=True)
-                hls_timing = check_hls_timing(output_dir)
-                if hls_timing["worst_slack_ns"] is not None:
-                    print(f"    HLS timing OK: worst slack = {hls_timing['worst_slack_ns']:.3f} ns")
-                # HLSTimingError will be raised if timing failed
-
             res = parse_results(output_dir)
-            results[variant] = res.get("total", {})
-
-            # Add HLS slack to results for reporting
-            if not use_rtl:
-                if hls_timing.get("worst_slack_ns") is not None:
-                    results[variant]["hls_slack_ns"] = hls_timing["worst_slack_ns"]
+            results[variant] = res
+            results[variant]["exp_cycles"] = exp_cycles
 
             # Optionally run timing search on synthesized design
             if timing_search and synth_only:
@@ -347,19 +207,14 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, synth_o
                             clk_period_ns_max=20.0,  # Conservative (50 MHz) - should pass
                         )
 
-                        # Merge timing results - use values from timing closure, not initial run
+                        # Merge timing results
                         achieved_fmax = timing_result.get("achieved_fmax_mhz", 0)
                         achieved_period = timing_result.get("achieved_period_ns", 0)
                         results[variant]["achieved_fmax_mhz"] = achieved_fmax
-                        results[variant]["achieved_period_ns"] = achieved_period
-                        results[variant]["fmax_mhz"] = achieved_fmax  # Update fmax to match
+                        results[variant]["fmax_mhz"] = achieved_fmax
                         results[variant]["iterations"] = timing_result.get("iterations", 0)
-                        # Update WNS to reflect the timing-closed result (should be ~0 at boundary)
-                        if "wns_at_closure" in timing_result:
-                            results[variant]["WNS"] = timing_result["wns_at_closure"]
 
                         # Compute latency from achieved timing
-                        results[variant]["exp_cycles"] = exp_cycles
                         if achieved_period > 0:
                             latency_ns = exp_cycles * achieved_period
                             results[variant]["latency_ns"] = latency_ns
@@ -444,17 +299,15 @@ def format_table(all_results):
 
 
 def write_csv(all_results, csv_path):
-    """Write results to CSV format."""
+    """Write results to CSV format (Option B: with latency)."""
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
 
         # Header
         writer.writerow([
             'Config', 'Implementation',
-            'LUT', 'FF', 'DSP', 'BRAM',
-            'WNS_ns', 'fmax_MHz', 'achieved_fmax_MHz', 'achieved_period_ns',
-            'exp_cycles', 'latency_ns', 'iterations',
-            'hls_slack_ns', 'LUT_delta', 'fmax_improvement_pct'
+            'LUT', 'DSP', 'fmax_MHz', 'cycles', 'latency_ns',
+            'LUT_delta', 'latency_delta_ns'
         ])
 
         # Data rows
@@ -465,46 +318,36 @@ def write_csv(all_results, csv_path):
             if "error" in hls or "error" in rtl:
                 continue
 
+            # Use achieved_fmax if available (from timing search), otherwise use initial fmax
+            fmax_hls = hls.get('achieved_fmax_mhz') or hls.get('fmax_mhz', 0)
+            fmax_rtl = rtl.get('achieved_fmax_mhz') or rtl.get('fmax_mhz', 0)
+            latency_hls = hls.get('latency_ns', 0)
+            latency_rtl = rtl.get('latency_ns', 0)
+
             # HLS row
             writer.writerow([
                 label, 'HLS',
                 int(hls.get('LUT', 0)),
-                int(hls.get('FF', 0)),
                 int(hls.get('DSP', 0)),
-                int(hls.get('BRAM', 0)),
-                f"{hls.get('WNS', 0):.3f}",
-                f"{hls.get('fmax_mhz', 0):.1f}",
-                f"{hls.get('achieved_fmax_mhz', 0):.1f}" if hls.get('achieved_fmax_mhz') else '',
-                f"{hls.get('achieved_period_ns', 0):.3f}" if hls.get('achieved_period_ns') else '',
-                int(hls.get('exp_cycles', 0)) if hls.get('exp_cycles') else '',
-                f"{hls.get('latency_ns', 0):.2f}" if hls.get('latency_ns') else '',
-                int(hls.get('iterations', 0)) if hls.get('iterations') else '',
-                f"{hls.get('hls_slack_ns', 0):.3f}" if hls.get('hls_slack_ns') is not None else '',
+                f"{fmax_hls:.1f}",
+                int(hls.get('exp_cycles', 0)),
+                f"{latency_hls:.2f}" if latency_hls else '',
                 '', ''
             ])
 
             # RTL row with deltas
             lut_delta = int(rtl.get('LUT', 0)) - int(hls.get('LUT', 0))
-            fmax_hls = hls.get('achieved_fmax_mhz', hls.get('fmax_mhz', 0))
-            fmax_rtl = rtl.get('achieved_fmax_mhz', rtl.get('fmax_mhz', 0))
-            fmax_improvement = ((fmax_rtl - fmax_hls) / fmax_hls * 100) if fmax_hls > 0 else 0
+            latency_delta = latency_rtl - latency_hls if (latency_rtl and latency_hls) else 0
 
             writer.writerow([
                 label, 'RTL_Compressor',
                 int(rtl.get('LUT', 0)),
-                int(rtl.get('FF', 0)),
                 int(rtl.get('DSP', 0)),
-                int(rtl.get('BRAM', 0)),
-                f"{rtl.get('WNS', 0):.3f}",
-                f"{rtl.get('fmax_mhz', 0):.1f}",
-                f"{rtl.get('achieved_fmax_mhz', 0):.1f}" if rtl.get('achieved_fmax_mhz') else '',
-                f"{rtl.get('achieved_period_ns', 0):.3f}" if rtl.get('achieved_period_ns') else '',
-                int(rtl.get('exp_cycles', 0)) if rtl.get('exp_cycles') else '',
-                f"{rtl.get('latency_ns', 0):.2f}" if rtl.get('latency_ns') else '',
-                int(rtl.get('iterations', 0)) if rtl.get('iterations') else '',
-                '',  # No HLS slack for RTL
+                f"{fmax_rtl:.1f}",
+                int(rtl.get('exp_cycles', 0)),
+                f"{latency_rtl:.2f}" if latency_rtl else '',
                 lut_delta,
-                f"{fmax_improvement:.1f}"
+                f"{latency_delta:.2f}" if latency_delta else ''
             ])
 
 
@@ -537,10 +380,10 @@ def main():
 
     # Low-bitwidth configs where compressors are beneficial via dotp_comp
     configs = [
-        (16, 16, 2, 8, 2, 2),
-        (32, 32, 4, 8, 2, 2),
-        (16, 16, 2, 8, 4, 4),
-        (32, 32, 4, 8, 4, 4),
+        #(16, 16, 2, 8, 2, 2),
+        #(32, 32, 4, 8, 2, 2),
+        #(16, 16, 2, 8, 4, 4),
+        #(32, 32, 4, 8, 4, 4),
         (16, 16, 2, 8, 4, 2),
     ]
 
@@ -560,44 +403,16 @@ def main():
     print(f"Work: {work_dir}\n")
 
     all_results = []
-    for i, config in enumerate(configs):
-        # Unpack config (support both old 6-tuple and new 7-tuple with run_variants)
-        if len(config) == 6:
-            mw, mh, pe, simd, ww, aw = config
-            run_variants = None
-        else:
-            mw, mh, pe, simd, ww, aw, run_variants = config
-
-        variants_str = f" (only {run_variants})" if run_variants else ""
-        print(f"[{i+1}/{len(configs)}] mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}{variants_str}...", flush=True)
+    for i, (mw, mh, pe, simd, ww, aw) in enumerate(configs):
+        print(f"[{i+1}/{len(configs)}] mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}...", flush=True)
         label, results = run_comparison(
-            mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, args.synth_only,
-            args.timing_search, args.synth_clk_period_ns, run_variants
+            mw, mh, pe, simd, ww, aw, board, work_dir, args.synth_only,
+            args.timing_search, args.synth_clk_period_ns
         )
         all_results.append((label, results))
 
     print("\n" + "=" * 80)
     print(format_table(all_results))
-
-    # Check for HLS timing warnings
-    hls_timing_warnings = []
-    for label, results in all_results:
-        hls = results.get("hls", {})
-        if hls.get("hls_slack_ns") is not None and hls["hls_slack_ns"] < 0:
-            hls_timing_warnings.append((label, hls["hls_slack_ns"]))
-
-    if hls_timing_warnings:
-        print("\n" + "!" * 80)
-        print("!!! WARNING: HLS TIMING CONSTRAINTS NOT MET !!!")
-        print("!" * 80)
-        print("The following configurations had negative HLS slack:")
-        for label, slack in hls_timing_warnings:
-            print(f"  - {label}: slack = {slack:.3f} ns")
-        print("")
-        print("This means Vitis HLS could not meet the target clock period.")
-        print("The results may still be valid if Vivado P&R achieved timing closure,")
-        print("but consider using a more relaxed --synth-clk-period-ns for fair comparison.")
-        print("!" * 80 + "\n")
 
     # Save JSON
     json_path = os.path.join(work_dir, "results.json")

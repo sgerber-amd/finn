@@ -2,14 +2,20 @@
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
 #
-# Benchmark add_multi compressor optimization in RTL MVAU layers.
-#
-# This benchmark compares:
-# - RTL with DSP + binary adder tree (noCompressor=1)
-# - RTL with DSP + compressor adder tree (noCompressor=0)
-#
-# Both use higher bitwidths (8-bit) where DSPs are mandatory.
-# The compressor only optimizes the lane reduction adder tree, not the DSP multiply.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Benchmark add_multi compressor optimization in RTL MVAU layers.
+
+This benchmark compares:
+- RTL with DSP + binary adder tree (noCompressor=1)
+- RTL with DSP + compressor adder tree (noCompressor=0)
+
+Both use higher bitwidths (8-bit) where DSPs are mandatory.
+The compressor only optimizes the lane reduction adder tree, not the DSP multiply.
+
+Usage (inside Docker):
+    python -m finn.compressor.benchmark_add_multi --synth-only --keep
+"""
 
 import argparse
 import csv
@@ -18,54 +24,19 @@ import os
 import shutil
 
 from qonnx.core.datatype import DataType
-from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import gen_finn_dt_tensor
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.builder.build_dataflow_config import default_build_dataflow_steps
-from finn.util.basic import make_build_dir
-from finn.util.test import get_test_model_trained
-
-# Board configurations
-BOARD_CONFIGS = {
-    "Pynq-Z1": "xc7z020clg400-1",
-    "ZCU104": "xczu7ev-ffvc1156-2-e",
-    "U250": "xcu250-figd2104-2L-e",
-    "VCK190": "xcvc1902-vsva2197-2MP-e-S",
-}
+from finn.compressor.benchmark_utils import (
+    BOARD_CONFIGS,
+    compute_latency_cycles,
+    format_config_label,
+)
+from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
 
-def create_model(ww, aw, mw, mh):
-    """Create a simple single-layer MVAU model for benchmarking."""
-    import numpy as np
-    from onnx import TensorProto, helper
-    from qonnx.core.modelwrapper import ModelWrapper
-    from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
-
-    wdt = DataType[f"INT{ww}"]
-    idt = DataType[f"UINT{aw}"]
-    odt = DataType["INT32"]  # Wide enough for accumulation
-
-    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, mw])
-    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [1, mh])
-
-    matmul = helper.make_node("MatMul", ["inp", "weights"], ["outp"])
-    graph = helper.make_graph(
-        nodes=[matmul], name="single_matmul", inputs=[inp], outputs=[outp]
-    )
-
-    model = qonnx_make_model(graph, producer_name="add_multi_benchmark")
-    model = ModelWrapper(model)
-
-    model.set_tensor_datatype("inp", idt)
-    model.set_tensor_datatype("outp", odt)
-    model.set_tensor_datatype("weights", wdt)
-
-    # Generate random weights
-    W = gen_finn_dt_tensor(wdt, (mw, mh))
-    model.set_initializer("weights", W)
-
-    return model
 
 
 def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_period_ns, pe, simd):
@@ -119,10 +90,11 @@ def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_pe
         ]
         shell_flow = build_cfg.ShellFlowType.VIVADO_ZYNQ
 
-    # Determine fpga_part
-    fpga_part = BOARD_CONFIGS.get(board)
-    if fpga_part is None:
+    # Determine fpga_part from standardized board configs
+    board_config = BOARD_CONFIGS.get(board.lower())
+    if board_config is None:
         raise ValueError(f"Unknown board: {board}")
+    fpga_part = board_config["part"]
 
     cfg = build.DataflowBuildConfig(
         output_dir=output_dir,
@@ -149,38 +121,33 @@ def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_pe
         return None
 
 
-def run_comparison(mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, synth_only, timing_search, synth_clk_period_ns):
+def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns):
     """Run both RTL variants (with and without add_multi compressor) and compare."""
-    label = f"mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}"
+    label = format_config_label(mw, mh, pe, simd, ww, aw)
     print(f"  Config: {label}")
 
+    wdt = DataType[f"INT{ww}"]
+    idt = DataType[f"UINT{aw}"]
+    odt = DataType["INT32"]
+
+    exp_cycles = compute_latency_cycles(mh, pe, mw, simd)
+
     results = {}
-
-    # Create model
-    model = create_model(ww, aw, mw, mh)
-
-    # Convert to MVAU - just basic transformations
-    # Let the build flow handle folding via config files
-    from qonnx.transformation.infer_data_layouts import InferDataLayouts
-    from qonnx.transformation.infer_datatypes import InferDataTypes
-    from qonnx.transformation.infer_shapes import InferShapes
-    import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
-
-    model = model.transform(InferShapes())
-    model = model.transform(InferDataTypes())
-    model = model.transform(InferDataLayouts())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(GiveUniqueNodeNames())
-
-    model_path = os.path.join(work_dir, f"{label}_base.onnx")
-    model.save(model_path)
 
     for variant in ["rtl_binary_adder", "rtl_compressor_adder"]:
         try:
             use_compressor = variant == "rtl_compressor_adder"
-            output_dir = os.path.join(work_dir, f"{label}_{variant}")
+            run_dir = os.path.join(work_dir, f"{label}_{variant}")
+            os.makedirs(run_dir, exist_ok=True)
+
+            # Create and save model (using test infrastructure)
+            W = gen_finn_dt_tensor(wdt, (mw, mh))
+            model = make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=None)
+            model_path = os.path.join(run_dir, "model.onnx")
+            model.save(model_path)
 
             print(f"    Building {variant}...", flush=True)
+            output_dir = os.path.join(run_dir, "output")
             synth_result = run_build(
                 model_path, output_dir, board, use_compressor, synth_only, synth_clk_period_ns, pe, simd
             )
@@ -193,6 +160,7 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, synth_o
                     "BRAM": synth_result.get("BRAM", 0),
                     "WNS": synth_result.get("WNS", 0),
                     "fmax_mhz": synth_result.get("fmax_mhz", 0),
+                    "exp_cycles": exp_cycles,
                 }
 
                 # Optionally run timing search on synthesized design
@@ -231,7 +199,14 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, synth_o
                             if "wns_at_closure" in timing_result:
                                 results[variant]["WNS"] = timing_result["wns_at_closure"]
 
-                            print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
+                            # Compute latency from achieved timing
+                            if achieved_period > 0:
+                                latency_ns = exp_cycles * achieved_period
+                                results[variant]["latency_ns"] = latency_ns
+                                print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
+                                print(f"      Latency: {exp_cycles} cycles = {latency_ns:.2f} ns")
+                            else:
+                                print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
                         else:
                             print(f"      WARNING: vivado_proj_folder not found: {vivado_proj_folder}")
                     else:
@@ -302,7 +277,7 @@ def format_table(all_results):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark add_multi compressor optimization")
-    parser.add_argument("--board", type=str, default="Pynq-Z1", choices=BOARD_CONFIGS.keys())
+    parser.add_argument("--board", choices=list(BOARD_CONFIGS.keys()), default="pynq-z1")
     parser.add_argument("--synth-only", action="store_true", help="Synthesis only (no bitfile)")
     parser.add_argument("--timing-search", action="store_true", help="Run timing closure search")
     parser.add_argument("--synth-clk-period-ns", type=float, default=10.0, help="Target clock period")
@@ -311,8 +286,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    board = args.board
-    fpga_part = BOARD_CONFIGS[board]
+    board_config = BOARD_CONFIGS[args.board]
+    board = board_config["board"]
+    fpga_part = board_config["part"]
 
     # Test configurations - 8-bit operands on 7-Series
     # 7-Series has no genINT8 fast path, so 8×8 uses standard mvu.sv with add_multi
@@ -349,7 +325,7 @@ if __name__ == "__main__":
     for i, (mw, mh, pe, simd, ww, aw) in enumerate(configs):
         print(f"[{i+1}/{len(configs)}] mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}...", flush=True)
         label, results = run_comparison(
-            mw, mh, pe, simd, ww, aw, board, fpga_part, work_dir, args.synth_only,
+            mw, mh, pe, simd, ww, aw, board, work_dir, args.synth_only,
             args.timing_search, args.synth_clk_period_ns
         )
         all_results.append((label, results))
@@ -357,46 +333,64 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print(format_table(all_results))
 
-    # Save CSV
+    # Save JSON
+    json_path = os.path.join(work_dir, "add_multi_results.json")
+    with open(json_path, "w") as f:
+        json.dump(all_results, f, indent=2)
+    print(f"\nResults saved to: {json_path}")
+
+    # Save CSV (Option B: with latency)
     csv_path = os.path.join(work_dir, "add_multi_results.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "Config", "Implementation", "LUT", "FF", "DSP", "BRAM",
-            "WNS_ns", "fmax_MHz", "achieved_fmax_MHz", "achieved_period_ns",
-            "iterations", "LUT_delta", "fmax_delta_pct"
+            "Config", "Implementation",
+            "LUT", "DSP", "fmax_MHz", "cycles", "latency_ns",
+            "LUT_delta", "latency_delta_ns"
         ])
 
         for label, results in all_results:
             binary = results.get("rtl_binary_adder", {})
             compressor = results.get("rtl_compressor_adder", {})
 
-            if "error" not in binary:
-                writer.writerow([
-                    label, "RTL_Binary_Adder",
-                    binary.get("LUT", 0), binary.get("FF", 0),
-                    binary.get("DSP", 0), binary.get("BRAM", 0),
-                    binary.get("WNS", 0), binary.get("fmax_mhz", 0),
-                    binary.get("achieved_fmax_mhz", ""), binary.get("achieved_period_ns", ""),
-                    binary.get("iterations", ""),
-                    "", ""
-                ])
+            if "error" in binary or "error" in compressor:
+                continue
 
-            if "error" not in compressor:
-                lut_delta = compressor.get("LUT", 0) - binary.get("LUT", 0)
-                # Use achieved_fmax if available, otherwise use initial fmax
-                fmax_b = binary.get("achieved_fmax_mhz") or binary.get("fmax_mhz", 0)
-                fmax_c = compressor.get("achieved_fmax_mhz") or compressor.get("fmax_mhz", 0)
-                fmax_delta_pct = ((fmax_c - fmax_b) / fmax_b * 100) if fmax_b > 0 else 0
+            # Use achieved_fmax if available (from timing search), otherwise use initial fmax
+            fmax_b = binary.get("achieved_fmax_mhz") or binary.get("fmax_mhz", 0)
+            fmax_c = compressor.get("achieved_fmax_mhz") or compressor.get("fmax_mhz", 0)
+            latency_b = binary.get("latency_ns", 0)
+            latency_c = compressor.get("latency_ns", 0)
 
-                writer.writerow([
-                    label, "RTL_Compressor_Adder",
-                    compressor.get("LUT", 0), compressor.get("FF", 0),
-                    compressor.get("DSP", 0), compressor.get("BRAM", 0),
-                    compressor.get("WNS", 0), compressor.get("fmax_mhz", 0),
-                    compressor.get("achieved_fmax_mhz", ""), compressor.get("achieved_period_ns", ""),
-                    compressor.get("iterations", ""),
-                    lut_delta, f"{fmax_delta_pct:.1f}"
-                ])
+            # Binary adder row
+            writer.writerow([
+                label, "RTL_Binary_Adder",
+                int(binary.get("LUT", 0)),
+                int(binary.get("DSP", 0)),
+                f"{fmax_b:.1f}",
+                int(binary.get("exp_cycles", 0)),
+                f"{latency_b:.2f}" if latency_b else "",
+                "", ""
+            ])
 
-    print(f"\nResults saved to: {csv_path}")
+            # Compressor adder row with deltas
+            lut_delta = int(compressor.get("LUT", 0)) - int(binary.get("LUT", 0))
+            latency_delta = latency_c - latency_b if (latency_c and latency_b) else 0
+
+            writer.writerow([
+                label, "RTL_Compressor_Adder",
+                int(compressor.get("LUT", 0)),
+                int(compressor.get("DSP", 0)),
+                f"{fmax_c:.1f}",
+                int(compressor.get("exp_cycles", 0)),
+                f"{latency_c:.2f}" if latency_c else "",
+                lut_delta,
+                f"{latency_delta:.2f}" if latency_delta else ""
+            ])
+
+    print(f"Results saved to: {csv_path}")
+
+    # Cleanup
+    if not args.keep and not args.work_dir:
+        print(f"\nCleaning up {work_dir}")
+        shutil.rmtree(work_dir)
