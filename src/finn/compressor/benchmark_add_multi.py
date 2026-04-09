@@ -302,7 +302,7 @@ def format_table(all_results):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark add_multi compressor optimization")
-    parser.add_argument("--board", type=str, default="VCK190", choices=BOARD_CONFIGS.keys())
+    parser.add_argument("--board", type=str, default="Pynq-Z1", choices=BOARD_CONFIGS.keys())
     parser.add_argument("--synth-only", action="store_true", help="Synthesis only (no bitfile)")
     parser.add_argument("--timing-search", action="store_true", help="Run timing closure search")
     parser.add_argument("--synth-clk-period-ns", type=float, default=10.0, help="Target clock period")
@@ -314,17 +314,17 @@ if __name__ == "__main__":
     board = args.board
     fpga_part = BOARD_CONFIGS[board]
 
-    # Test configurations - 10-bit operands to force genSoftVec path on Versal
-    # (Exceeds genINT8 threshold of WW<=8 && AW<=9, forcing mvu.sv with add_multi)
+    # Test configurations - 8-bit operands on 7-Series
+    # 7-Series has no genINT8 fast path, so 8×8 uses standard mvu.sv with add_multi
     # add_multi compressors only activate when SIMD >= 4
     configs = [
         # Format: (mw, mh, pe, simd, ww, aw)
 
-        # 10-bit × 10-bit (forces genSoftVec, uses add_multi for lane reduction)
-        (8, 8, 1, 4, 10, 10),    # Smallest that triggers genSoftVec + add_multi
+        # 8-bit × 8-bit (7-Series uses mvu.sv, has multi-lane slicing with add_multi)
+        (8, 8, 1, 4, 8, 8),      # Standard config for 7-Series
 
-        # Mixed precision (10-bit weight, 9-bit activation - still exceeds threshold)
-        (8, 8, 1, 4, 10, 9),     # Mixed precision variant
+        # Mixed precision variant
+        (8, 8, 1, 4, 8, 4),      # 8-bit weights × 4-bit activations
     ]
 
     # Default work directory

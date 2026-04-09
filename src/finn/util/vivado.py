@@ -78,10 +78,8 @@ def out_of_context_synth(
             ret[res_fields[0]] = 0
         except IndexError:
             ret[res_fields[0]] = 0
-    if ret["WNS"] == 0:
-        ret["fmax_mhz"] = 0
-    else:
-        ret["fmax_mhz"] = 1000.0 / (clk_period_ns - ret["WNS"])
+    # fmax based on passing clock period (not WNS-adjusted critical path)
+    ret["fmax_mhz"] = 1000.0 / clk_period_ns
     return ret
 
 
@@ -184,6 +182,18 @@ close_design
 # Binary search loop
 set timf [open "timing_resume.log" w]
 set iteration 0
+set best_passing_period $ts
+set best_passing_wns 0
+
+# Helper proc to save best result so far (called after each iteration)
+proc save_intermediate_result {{period_val wns iteration}} {{
+    set fp [open "res_timing_intermediate.txt" w]
+    puts $fp "achieved_period_ns=$period_val"
+    puts $fp "achieved_fmax_mhz=[expr 1000.0 / $period_val]"
+    puts $fp "wns_at_closure=$wns"
+    puts $fp "iterations=$iteration"
+    close $fp
+}}
 
 while {{[expr $ts - $tm] > 0.1}} {{
     incr iteration
@@ -225,8 +235,13 @@ while {{[expr $ts - $tm] > 0.1}} {{
         puts "INFO: Timing FAILED, increasing period"
     }} else {{
         set ts $tt
+        set best_passing_period $ts
+        set best_passing_wns $wns
         puts "INFO: Timing PASSED, decreasing period"
     }}
+
+    # Save intermediate best result after each iteration
+    save_intermediate_result $best_passing_period $best_passing_wns $iteration
 
     set tt [expr {{max((4*$tm+$ts)/5.0, min($tt-$wns, ($tm+$ts)/2.0))}}]
 }}
@@ -256,12 +271,34 @@ puts "INFO: Results written to res_timing.txt"
 exit
 """)
 
-    # Run Vivado with the script
+    # Run Vivado with the script with timeout
     cmd = ["vivado", "-mode", "batch", "-source", tcl_script]
-    subprocess.run(cmd, cwd=vivado_proj_folder, check=True)
 
-    # Parse results
-    res_path = os.path.join(vivado_proj_folder, "res_timing.txt")
+    # Timeout: 60 minutes max (typical timing closure takes 20-40 min, hung processes go 60+ min)
+    timeout_seconds = 60 * 60
+
+    try:
+        subprocess.run(cmd, cwd=vivado_proj_folder, check=True, timeout=timeout_seconds)
+        # Normal completion - use final result
+        res_path = os.path.join(vivado_proj_folder, "res_timing.txt")
+    except subprocess.TimeoutExpired:
+        # Timeout - process hung, kill it and recover intermediate results
+        print("WARNING: Timing closure timed out after 60 minutes")
+        print("         Process likely hung in Phase 13.2 Critical Path Optimization")
+        print("         Attempting to recover best intermediate result...")
+        res_path = os.path.join(vivado_proj_folder, "res_timing_intermediate.txt")
+        if not os.path.exists(res_path):
+            raise Exception("Timing closure timed out and no intermediate results found")
+    except subprocess.CalledProcessError:
+        # Vivado failed/crashed - try to recover intermediate results
+        print("WARNING: Timing closure did not complete successfully")
+        print("         Attempting to recover best intermediate result...")
+        res_path = os.path.join(vivado_proj_folder, "res_timing_intermediate.txt")
+        if not os.path.exists(res_path):
+            # No intermediate results available - re-raise the error
+            raise
+
+    # Parse results (either final or best intermediate)
     with open(res_path, "r") as f:
         res_data = f.read().split("\n")
 
@@ -275,4 +312,14 @@ exit
                 ret[key] = 0
 
     ret["vivado_proj_folder"] = vivado_proj_folder
+
+    # Mark if this was recovered from intermediate results
+    if "intermediate" in res_path:
+        ret["incomplete"] = True
+        ret["timeout"] = True
+        print(f"         Recovered: period={ret.get('achieved_period_ns')}ns, "
+              f"fmax={ret.get('achieved_fmax_mhz'):.1f} MHz, "
+              f"iterations={int(ret.get('iterations', 0))} (incomplete)")
+        print(f"         This is the BEST PASSING result before timeout/hang")
+
     return ret

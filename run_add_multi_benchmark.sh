@@ -22,7 +22,7 @@ echo ""
 mkdir -p "$WORK_DIR"
 
 python -m finn.compressor.benchmark_add_multi \
-    --board VCK190 \
+    --board Pynq-Z1 \
     --synth-only \
     --timing-search \
     --synth-clk-period-ns 10.0 \

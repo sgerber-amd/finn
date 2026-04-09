@@ -536,32 +536,13 @@ def main():
     fpga_part = board_cfg["part"]
 
     # Low-bitwidth configs where compressors are beneficial via dotp_comp
-    # Format: (mw, mh, pe, simd, ww, aw, run_variants)
-    #   run_variants: list of ["hls"] or ["rtl_comp"] or ["hls", "rtl_comp"] (default)
-
-    # RETRY: Only configs/variants that failed timing closure in 2026-04-08 run
-    # (initial synthesis succeeded, but timing search had Vivado crashes/errors)
     configs = [
-        (16, 16, 2, 8, 2, 2, ["hls"]),        # mw16_mh16_pe2_simd8_w2_a2 - HLS timing closure failed
-        (32, 32, 4, 8, 4, 4, ["rtl_comp"]),   # mw32_mh32_pe4_simd8_w4_a4 - RTL_COMP timing closure failed
-        (16, 16, 2, 8, 4, 2, None),           # mw16_mh16_pe2_simd8_w4_a2 - HLS crashed, RTL_COMP didn't run (run both)
+        (16, 16, 2, 8, 2, 2),
+        (32, 32, 4, 8, 2, 2),
+        (16, 16, 2, 8, 4, 4),
+        (32, 32, 4, 8, 4, 4),
+        (16, 16, 2, 8, 4, 2),
     ]
-
-    """
-    # ORIGINAL FULL CONFIG LIST (all succeeded initial synth)
-    configs = [
-        # 2-bit (quaternary) - good compressor benefit
-        (16, 16, 2, 8, 2, 2),    # Small 2-bit
-        (32, 32, 4, 8, 2, 2),    # Medium 2-bit, PE=4
-
-        # 4-bit - compressor still beneficial over DSPs
-        (16, 16, 2, 8, 4, 4),    # Small 4-bit
-        (32, 32, 4, 8, 4, 4),    # Medium 4-bit
-
-        # Mixed precision: 4-bit weights, 2-bit activations (has test precedence in test_set_folding.py)
-        (16, 16, 2, 8, 4, 2),    # Mixed w4_a2 - tested config
-    ]
-    """
 
     # Default to FINN_BUILD_DIR/hls_vs_compressor_benchmark
     if args.work_dir:
