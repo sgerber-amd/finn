@@ -14,6 +14,15 @@ if __name__ == "__main__":
 	(n, na, nb, sa, sb) = (int(_[0]), int(_[2]), int(_[4]), _[1] == 's', _[3] == 's')
 	assert nb <= na
 
+	# Target platform: ca/accu goes in argv[2], target in argv[3] (default versal)
+	target_arg = sys.argv[3] if len(sys.argv) > 3 else "versal"
+	if target_arg == "7series":
+		target = SevenSeries()
+		fpga_part = "xc7z020clg400-1"
+	else:  # versal (default)
+		target = Versal()
+		fpga_part = "xcvc1902-vsva2197-2MP-e-S"
+
 	clog2 = lambda x: (x-1).bit_length()
 	np = clog2(n) + (na if nb == 1 and not sb else na+nb) if na > 1 else (
 			clog2(n+1) if sa == sb else 1 + clog2(n)
@@ -39,7 +48,7 @@ if __name__ == "__main__":
 	script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 	output_path = os.path.join(script_dir, "gen", name + ".sv")
 	generate_compressor(
-		target            = SevenSeries(),  # Changed to test 7-Series gate absorption
+		target            = target,
 		shape             = Shape((len(col) for col in shape)),
 		name              = name,
 		comb_depth        = None,
@@ -73,6 +82,7 @@ if __name__ == "__main__":
 						.replace("{signed_a}", str(int(sa)))
 						.replace("{signed_b}", str(int(sb)))
 						.replace("{abs_term}", str(abs_term))
+						.replace("{part}", fpga_part)
 						# Replace relative paths with absolute paths for TCL
 						.replace("hdl/", hdl_dir + "/")
 						.replace("gen/", gen_dir + "/")

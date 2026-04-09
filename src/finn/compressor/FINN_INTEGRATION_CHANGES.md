@@ -6,10 +6,30 @@ This document tracks all new and modified files in the FINN compressor integrati
 **Current**: FINN integrated version `finn/src/finn/compressor` (5912 lines total, +28% net addition including all integration work)
 **Status**: Integration complete as of 2026-04-09
 **Cleanup**: Code review and debloat completed 2026-04-09
+**Test fixes**: Path issues fixed, dual-platform support added 2026-04-09
 
 ---
 
-## Cleanup Summary (2026-04-09)
+## Recent Changes (2026-04-09)
+
+### Test Infrastructure Fixes
+
+**Path Issues Fixed:**
+- `dotp.py` now uses absolute paths for output files (was relative `gen/`)
+- Template processing replaces relative paths with absolute paths in TCL
+- Tests work regardless of CWD or Vivado work directory
+- Fixes: "FileNotFoundError: gen/comp_*.sv" and "hdl/mul_comp_map.sv does not exist"
+
+**Dual-Platform Support Added:**
+- All 3 standalone test suites now support both Versal and 7-Series
+- Suite 1 (core): `./run_tests.sh "" [versal|7series]`
+- Suite 2 (dotp_comp): `./run_dotp_comp_tests.sh [versal|7series]`
+- Suite 3 (add_multi): `./run_add_multi_comp_tests.sh [versal|7series]`
+- `run_all_compressor_tests.sh` now runs 8 test suites (was 5): 3 suites × 2 platforms + 2 MVU suites
+- Versal: Full gate absorption (VersalPredAdder + RippleSumPredAdder)
+- 7-Series: Gate absorption disabled (SinglePredCandidate only)
+
+### Cleanup Summary
 
 **Net reduction**: -793 lines (-49% bloat removed)
 

@@ -271,7 +271,7 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
         if key not in generated:
             name, _path, delay = generate_add_multi_comp(
                 target, simd, w,
-                pipeline_every=None,
+                pipeline_every=1,  # Max pipelining (match dotp_comp behavior)
                 output_dir=output_dir)
             generated[key] = (name, delay)
 

@@ -3,9 +3,12 @@
 # Run dotp_comp integration tests for multiple configurations.
 # Uses dotp_finn.py to generate the compressor core (comp.sv),
 # then instantiates it from the static dotp_comp template via XSim.
+#
+# Usage: ./run_dotp_comp_tests.sh [versal|7series]
 
 ((${KEEP_LOG:=0}))
 ((${MAX_WORKERS:=12}))
+TARGET="${1:-versal}"  # Default to versal
 
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 FINN_SRC="$(cd "$SRC_DIR/../.." && pwd)"
@@ -19,13 +22,13 @@ fi
 
 echo "Vivado: $(command -v vivado)"
 echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS WORK_DIR=$WORK_DIR"
+echo "Target: $TARGET"
 
 source "$SRC_DIR/lib/test_common.sh"
 
-# Test configs: --pe PE --simd SIMD --ww WW --aw AW --accu_width ACCU [--signed_activations] [--target TARGET]
-# Default target is Versal; add --target 7-Series for 7-Series tests
+# Test configs: --pe PE --simd SIMD --ww WW --aw AW --accu_width ACCU [--signed_activations]
+# Target is set via script argument, applied to all tests
 TESTS=(
-	# Versal tests (original)
 	"--pe 2 --simd 8 --ww 1 --aw 1 --accu_width 16"
 	"--pe 2 --simd 8 --ww 1 --aw 1 --accu_width 16 --signed_activations"
 	"--pe 2 --simd 8 --ww 2 --aw 1 --accu_width 16"
@@ -34,15 +37,11 @@ TESTS=(
 	"--pe 2 --simd 16 --ww 2 --aw 2 --accu_width 16 --signed_activations"
 	"--pe 1 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations"
 	"--pe 4 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations"
-	# 7-Series tests (new) - covers failing FINN integration configs
-	"--pe 1 --simd 1 --ww 4 --aw 4 --accu_width 16 --target 7-Series"
-	"--pe 2 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations --target 7-Series"
-	"--pe 1 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations --target 7-Series"
 )
 
 function parse_config {
-	local pe="" simd="" ww="" aw="" accu="" signed_act="" target_suffix="" target_name="Versal"
-	CFG_TARGET_FLAG=""
+	local pe="" simd="" ww="" aw="" accu="" signed_act=""
+	CFG_SIGNED_FLAG=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--pe)    pe="$2"; shift 2;;
@@ -51,19 +50,20 @@ function parse_config {
 			--aw)    aw="$2"; shift 2;;
 			--accu_width) accu="$2"; shift 2;;
 			--signed_activations) signed_act="_sa"; CFG_SIGNED_FLAG="--signed_activations"; shift;;
-			--target) CFG_TARGET_FLAG="--target $2"; target_name="$2"; target_suffix="_$(echo "$2" | tr ' ' '_')"; shift 2;;
 			*) shift;;
 		esac
 	done
 	CFG_PE="$pe"; CFG_SIMD="$simd"; CFG_WW="$ww"; CFG_AW="$aw"; CFG_ACCU="$accu"
-	CFG_LABEL="pe${pe}_simd${simd}_ww${ww}_aw${aw}_accu${accu}${signed_act}${target_suffix}"
-	# Sanitize label for SystemVerilog identifiers (replace hyphens with underscores)
+	CFG_LABEL="pe${pe}_simd${simd}_ww${ww}_aw${aw}_accu${accu}${signed_act}"
+	# Sanitize label for SystemVerilog identifiers
 	CFG_LABEL="${CFG_LABEL//-/_}"
-	# Set FPGA part based on target
-	if [[ "$target_name" == "7-Series" ]]; then
+	# Set FPGA part and target flag based on TARGET variable
+	if [[ "$TARGET" == "7series" ]]; then
 		CFG_PART="xc7z020clg400-1"  # Pynq-Z1
+		CFG_TARGET_FLAG="--target 7-Series"
 	else
 		CFG_PART="xcvc1902-vsva2197-2MP-e-S"  # Versal VCK190
+		CFG_TARGET_FLAG=""
 	fi
 }
 

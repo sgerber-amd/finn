@@ -1,7 +1,7 @@
 # Create Fresh Project
 set sig {n}x{sa}{na}{sb}{nb}
 set top dotp_$sig
-set part xcvc1902-vsva2197-2MP-e-S
+set part {part}
 create_project -force $top $top.vivado -part $part
 
 # Import Design and Simulation Sources

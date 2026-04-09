@@ -8,7 +8,7 @@
 
 set label {label}
 set tb {tb}
-set part xcvc1902-vsva2197-2MP-e-S
+set part {part}
 create_project -force add_multi_comp_$label add_multi_comp_$label.vivado -part $part
 
 # Design sources: only the generated compressor

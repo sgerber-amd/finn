@@ -6,10 +6,12 @@
 #   2. Expand TB and TCL templates
 #   3. Run XSim via Vivado
 #
+# Usage: ./run_add_multi_comp_tests.sh [versal|7series]
 # Prerequisites: Vivado on PATH
 
 ((${KEEP_LOG:=0}))
 ((${MAX_WORKERS:=12}))
+TARGET="${1:-versal}"  # Default to versal
 
 if ! command -v vivado >/dev/null 2>&1; then
 	echo "ERROR: vivado not found in PATH." >&2
@@ -18,6 +20,7 @@ fi
 
 echo "Vivado: $(command -v vivado)"
 echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS"
+echo "Target: $TARGET"
 
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -53,6 +56,12 @@ function parse_config {
 	done
 	CFG_N="$n"; CFG_W="$w"
 	CFG_LABEL="n${n}_w${w}"; [ -n "$p" ] && CFG_LABEL="${CFG_LABEL}_p${p}"
+	# Set FPGA part based on TARGET variable
+	if [[ "$TARGET" == "7series" ]]; then
+		CFG_PART="xc7z020clg400-1"  # Pynq-Z1
+	else
+		CFG_PART="xcvc1902-vsva2197-2MP-e-S"  # Versal VCK190
+	fi
 }
 
 function run_sim {
@@ -100,7 +109,7 @@ for args in "${TESTS[@]}"; do
 
 	# Expand TCL
 	sed -e "s|{label}|$label|g" -e "s|{tb}|add_multi_comp_${label}_tb|g" \
-	    -e "s|{gen_dir}|$gen_dir|g" \
+	    -e "s|{gen_dir}|$gen_dir|g" -e "s|{part}|$CFG_PART|g" \
 	    "$HDL_DIR/add_multi_comp_template.tcl" > "$gen_dir/add_multi_comp_${label}.tcl"
 done
 echo

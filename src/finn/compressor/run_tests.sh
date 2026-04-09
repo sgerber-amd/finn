@@ -6,6 +6,8 @@
 ((${MAX_WORKERS:=12}))
 # Constant Absorption Option
 ca="$1"
+# Target platform (versal or 7series)
+target="${2:-versal}"
 
 # PYTHONPATH so python -m finn.compressor.src.* resolves
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -55,7 +57,7 @@ function run_test {
 	fi
 
 	# Phase 1: Generate compressor
-	if ! python3 -m finn.compressor.src.dotp "$sig" "$ca" >"$gen_log" 2>&1; then
+	if ! python3 -m finn.compressor.src.dotp "$sig" "$ca" "$target" >"$gen_log" 2>&1; then
 		echo "ERROR: Generation failed for $sig" >&2
 		return 1
 	fi
@@ -75,7 +77,7 @@ echo -e "Generating configs:\n"
 for test in "${TESTS[@]}"; do
 	echo "  $test ..."
 	LABELS+=("$test")
-	if ! python3 -m finn.compressor.src.dotp "$test" "$ca" >/dev/null 2>&1; then
+	if ! python3 -m finn.compressor.src.dotp "$test" "$ca" "$target" >/dev/null 2>&1; then
 		echo "ERROR: Generation failed for $test" >&2
 		exit 1
 	fi
