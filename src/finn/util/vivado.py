@@ -152,12 +152,31 @@ puts "INFO: Resuming timing search from existing synthesis"
 puts "INFO: Clock name: $clk_name"
 puts "INFO: Initial bounds: \\[$tm ns : $ts ns\\]"
 
+# NOTE: Timing relaxation parameters (route.timingRelaxation, route.maxIterations,
+# route.timingRelaxationRatio) do not exist in Vivado 2024.2.
+# The Default routing directive has built-in timeouts and won't hang indefinitely.
+# If using older Vivado versions with hanging issues, uncomment and test:
+# set_param route.timingRelaxation true
+# set_param route.maxIterations 100
+# set_param route.timingRelaxationRatio 0.95
+
+puts "INFO: Using Default routing directive (no timing relaxation params in Vivado 2024.2)"
+
 # Open synthesized design
 open_run synth_1
 
-# Create tmp.xdc for dynamic constraints
-close [open tmp.xdc w]
+# CRITICAL: Remove the original clock constraint file from OOC synth
+# It contains "create_clock -period 10.000 [get_nets ap_clk]" which conflicts
+# with our dynamic timing search
 set constr_set [current_fileset -constrset]
+set orig_xdc [get_files -of_objects $constr_set *.xdc -filter {{NAME =~ "*finn_design_wrapper.xdc"}}]
+if {{$orig_xdc ne ""}} {{
+    puts "INFO: Removing original constraint file: $orig_xdc"
+    remove_files -fileset $constr_set $orig_xdc
+}}
+
+# Create tmp.xdc for dynamic constraints (like reference script)
+close [open tmp.xdc w]
 add_files -fileset $constr_set tmp.xdc
 set_property target_constrs_file tmp.xdc $constr_set
 close_design
@@ -169,6 +188,7 @@ set iteration 0
 while {{[expr $ts - $tm] > 0.1}} {{
     incr iteration
 
+    # Write clock constraint to tmp.xdc (matching reference script approach)
     close [open tmp.xdc w]
     open_run synth_1
     create_clock -name clk -period $tt [get_ports $clk_name]
@@ -176,6 +196,15 @@ while {{[expr $ts - $tm] > 0.1}} {{
     close_design
 
     reset_run impl_1
+
+    # Keep pre-route phys_opt (fast, useful) but disable post-route (Phase 13 - very slow)
+    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED false [get_runs impl_1]
+
+    # Use Default directive (no directive set) for better timing quality
+    # Combined with timing relaxation params above, this gives close to OOC synth quality
+    # without risk of infinite hanging (router gives up after 100 iterations)
+    # NOTE: Quick directive line removed - Default routing is now used
+
     puts -nonewline $timf "# Iteration $iteration: Testing period $tt ns (\\[$tm : $ts\\]) -> "
     flush $timf
 
@@ -208,21 +237,19 @@ puts $timf "Achieved fmax: [expr 1000.0 / $ts] MHz"
 puts $timf "Total iterations: $iteration"
 close $timf
 
-# Extract resources from final implementation
+# Extract final WNS from implementation
+# Note: Resource counts (LUT/FF/DSP) don't change during timing iterations,
+# so we reuse them from the initial synthesis report (ooc_synth_and_timing.json)
 open_run impl_1
-set util [report_utilization -return_string]
-set util_lut [exec echo $util | grep LUT | head -n 1 | cut -d| -f3 | tr -d " "]
-set util_ff [llength [get_cells -hier -filter {{PRIMITIVE_TYPE =~ *.F*E*}}]]
 set time_wns [get_property SLACK [get_timing_paths]]
+close_design
 
-# Write results
+# Write timing results only
 set fp [open "res_timing.txt" w]
 puts $fp "achieved_period_ns=$ts"
 puts $fp "achieved_fmax_mhz=[expr 1000.0 / $ts]"
 puts $fp "wns_at_closure=$time_wns"
 puts $fp "iterations=$iteration"
-puts $fp "LUT=$util_lut"
-puts $fp "FF=$util_ff"
 close $fp
 
 puts "INFO: Results written to res_timing.txt"

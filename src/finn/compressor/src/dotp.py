@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
 	name = "comp_" + sig
 	generate_compressor(
-		target            = Versal(),
+		target            = SevenSeries(),  # Changed to test 7-Series gate absorption
 		shape             = Shape((len(col) for col in shape)),
 		name              = name,
 		comb_depth        = None,

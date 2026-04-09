@@ -1,0 +1,62 @@
+VIVADO CRASH REPORT - 2026-04-08
+==================================
+
+DESIGN INFORMATION:
+- Config: mw16_mh16_pe2_simd8_w2_a2_hls
+- Implementation: HLS-based MVAU (NOT RTL compressor)
+- Target: Versal xcvc1902-vsva2197-2MP-e-S
+- Resources: LUT=888, FF=966, DSP=0, Carry=4, BRAM=0
+
+VIVADO VERSION:
+- Vivado v2024.2 (64-bit)
+- Build 5239630 on Fri Nov 08 22:34:34 MST 2024
+- Path: /proj/xbuilds/SWIP/2024.2_1113_1001/installs/lin64/Vivado/2024.2/
+
+CRASH LOCATION:
+- Phase: route_design → Phase 13.2 Critical Path Optimization
+- Timing at crash: WNS = -0.015 ns, TNS = -0.015 ns
+- Process ID: 85760
+- Signal: 11 (SIGSEGV - segmentation fault)
+
+CRASH STACKTRACE:
+- std::_Rb_tree_insert_and_rebalance() [C++ STL red-black tree]
+- std::_Rb_tree::_M_insert_unique() [std::set insertion]
+- sta::WorstSlack::updateWorstSlack() [timing analysis]
+- sta::Search::updateTns() [total negative slack update]
+- XilinxBudgeterSearch::seedRequired() [delay budgeting]
+- Thread pool worker (multithreaded execution)
+
+CRASH LOG FILE:
+/scratch/users/sgerber/finn_temp_files/home_dir/synth_out_of_context_6mr8gjx6/
+results_finn_design_wrapper/vivadocompile/vivadocompile.runs/impl_1/
+hs_mangled_err_pid85760.log
+
+SYNTHESIS DIRECTORY:
+/scratch/users/sgerber/finn_temp_files/home_dir/synth_out_of_context_6mr8gjx6/
+results_finn_design_wrapper/
+
+BUILD LOG:
+/scratch/users/sgerber/finn_temp_files/quick_pipelined_test_20260408_142657/
+mw16_mh16_pe2_simd8_w2_a2_hls/output/build_dataflow.log
+
+DESIGN CHARACTERISTICS:
+- Clean HLS-generated Verilog (no custom constraints)
+- Contains LookAhead8 carry primitives
+- No RLOC/LOC/LUTNM constraint conflicts
+- No DRC violations
+- No placement warnings
+- Routing completed successfully (Phase 1-12 complete)
+- All nets routed, no congestion
+
+TIMING CONTEXT:
+- Target clock period: 2.797 ns
+- WNS after routing: -0.018 ns
+- WNS during crash: -0.015 ns (improving)
+- Only 1 failing endpoint (TNS = WNS)
+- Marginal timing failure (15 picoseconds)
+
+CRASH MECHANISM:
+- Occurred during multithreaded physical optimization
+- Memory corruption in std::set<sta::Vertex*> data structure
+- Red-black tree pointer became invalid during rebalancing
+- Suggests race condition in concurrent timing graph updates

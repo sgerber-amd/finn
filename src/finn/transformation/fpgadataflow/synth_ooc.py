@@ -34,6 +34,7 @@ from shutil import copy2
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node
 from finn.util.vivado import out_of_context_synth
+import shutil
 
 
 def is_hls_float_op(node, model):
@@ -42,6 +43,62 @@ def is_hls_float_op(node, model):
             if model.get_tensor_datatype(inp).name.startswith("FLOAT"):
                 return True
     return False
+
+
+def generate_unified_add_multi(model, build_dir):
+    """
+    Generate unified add_multi.sv with aggregated CATCH_COMP entries from all MVAU nodes.
+
+    This function:
+    1. Collects compressor specs from all MVAU_rtl nodes in the model
+    2. Deduplicates specs (multiple nodes may generate same compressor)
+    3. Programmatically generates CATCH_COMP lines
+    4. Injects them into the add_multi.sv template
+    5. Writes unified version to synthesis build directory
+
+    Uses structured metadata (node attributes) rather than parsing generated files,
+    ensuring robust aggregation without regex/format assumptions.
+    """
+    # Collect all compressor specs from MVAU_rtl nodes
+    all_specs = set()
+    for node in model.graph.node:
+        if node.op_type == "MVAU_rtl":
+            inst = getCustomOp(node)
+            specs_str = inst.get_nodeattr("add_multi_comp_specs")
+            if specs_str:
+                # Parse "N,W,D;N,W,D;..." format
+                for spec in specs_str.split(";"):
+                    n, w, d = map(int, spec.split(","))
+                    all_specs.add((n, w, d))
+
+    # Get template from finn-rtllib
+    rtllib_template = os.path.join(os.environ["FINN_ROOT"],
+                                   "finn-rtllib/mvu/add_multi.sv")
+    with open(rtllib_template, 'r') as f:
+        template = f.read()
+
+    # Generate CATCH_COMP lines programmatically (no parsing!)
+    if all_specs:
+        catch_comp_lines = [f"\t`CATCH_COMP({n},{w},{d})"
+                           for n, w, d in sorted(all_specs)]
+        entries = "\n".join(catch_comp_lines) + "\n"
+    else:
+        # No compressors - use template as-is
+        entries = ""
+
+    # Insert entries at marker
+    marker = "\t// FINN_GENERATED_COMP_ENTRIES\n"
+    if marker not in template:
+        raise RuntimeError(
+            "FINN_GENERATED_COMP_ENTRIES marker not found in finn-rtllib/mvu/add_multi.sv! "
+            "Template file may have been modified."
+        )
+
+    unified = template.replace(marker, entries + marker)
+
+    # Write unified version to synthesis build directory
+    with open(os.path.join(build_dir, "add_multi.sv"), 'w') as f:
+        f.write(unified)
 
 
 class SynthOutOfContext(Transformation):
@@ -68,6 +125,11 @@ class SynthOutOfContext(Transformation):
         for file in all_verilog_srcs:
             if any([file.endswith(x) for x in verilog_extensions]):
                 copy2(file, build_dir)
+
+        # Generate unified add_multi.sv with aggregated CATCH_COMP entries
+        # This overwrites any per-node add_multi.sv files that were copied above
+        generate_unified_add_multi(model, build_dir)
+
         # extract additional tcl commands to set up floating-point ips correctly
         float_ip_tcl = []
         for node in model.graph.node:

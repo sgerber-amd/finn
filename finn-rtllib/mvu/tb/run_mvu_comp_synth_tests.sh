@@ -88,7 +88,7 @@ for i in "${!TESTS[@]}"; do
 	gen_out=$(python3 -m finn.compressor.src.dotp_finn \
 		--simd "$CFG_SIMD" --ww "$CFG_WW" --aw "$CFG_AW" \
 		--accu_width "$CFG_ACCU" $CFG_SIGNED_FLAG \
-		--dotp-template "$MVU_DIR/dotp_comp_template.sv" \
+		--dotp-template "$FINN_SRC/finn/compressor/hdl/dotp_comp_template.sv" \
 		--dotp-output-name dotp_comp.sv \
 		-o "$gen_dir" 2>&1)
 	if [ $? -ne 0 ]; then

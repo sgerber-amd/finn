@@ -42,6 +42,7 @@ synth_design -top mvu_vvu_axi -part $part -generic [join { \
 	WEIGHT_WIDTH={ww} \
 	ACCU_WIDTH={accu_width} \
 	SIGNED_ACTIVATIONS={signed_act} \
+	USE_COMPRESSOR=1 \
 	COMP_PIPELINE_DEPTH={comp_depth} \
 }]
 

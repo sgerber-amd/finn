@@ -9,19 +9,19 @@ from ..utils.shape import Shape
 
 class CompressorConstructor:
     def adjust_compression_goal_for_constants(self, compression_goal, constants):
-        return lambda x: (compression_goal(x) - 
+        # Subtract constants, but never go below 2 (minimum achievable by compressor)
+        return lambda x: max(2, compression_goal(x) -
                                 (constants[x] if x < len(constants) else 0))
     
     def get_compression_goal(self, final_adder, accumulate, constants):
-        if accumulate:
-            def compression_goal(x):
-                return final_adder.compression_goal(x) - 1
-        else:
-            compression_goal = final_adder.compression_goal
-        return self.adjust_compression_goal_for_constants(
-            compression_goal, constants)        
+        # Initial compression goal is the final_adder's capacity.
+        # For accumulate mode, we do a second pass after adding constants
+        # to ensure room for feedback.
+        compression_goal = final_adder.compression_goal
+        return self.adjust_compression_goal_for_constants(compression_goal, constants)        
 
     def add_constants_to_stage(self, s: CompressionStage, constants):
+        """Add constant bits to the compression stage."""
         for idx, el in enumerate(constants):
             if el:
                 c = ConstantOne()
@@ -51,14 +51,29 @@ class CompressorConstructor:
             c.stages[-1].connect_to(s)
             c.stages.append(s)
 
+        # CRITICAL: This loop can hang if compression_goal is unreachable
+        # add_compression_stage cannot compress height-1 or height-2 columns (requires >= 3)
+        # Therefore compression_goal must be achievable given this constraint
+        # See get_compression_goal() for how this is ensured in accumulate configurations
         while not self.compression_goal_reached(c.stages[-1].output_shape,
                                                 compression_goal):
             self.add_compression_stage(c, compression_goal, counter_candidates)
 
         # Add constants to the graph.
-        if not isinstance(c.stages[-1], CompressionStage) and constants: 
+        if not isinstance(c.stages[-1], CompressionStage) and constants:
             self.add_compression_stage(c, compression_goal, counter_candidates)
         self.add_constants_to_stage(c.stages[-1], constants)
+
+        # After constants, check if we need additional compression for accumulator mode.
+        # The ternary adder receives: compressor_output + feedback (height 1).
+        # If any column exceeds final_adder capacity, we need more compression.
+        if accumulate:
+            def post_const_goal(x):
+                # Leave room for feedback (height 1) within ternary adder capacity
+                return max(2, final_adder.compression_goal(x) - 1)
+
+            while not self.compression_goal_reached(c.stages[-1].output_shape, post_const_goal):
+                self.add_compression_stage(c, post_const_goal, counter_candidates)
 
         if comb_depth:
             pipeliner = CompressorPipeliner()
@@ -83,10 +98,26 @@ class CompressorConstructor:
     
     def add_compression_stage(self, compressor: Compressor, compression_goal,
                               counter_candidates):
+        """Add a compression stage to reduce column heights toward the compression goal.
+
+        IMPORTANT LIMITATION:
+        This method can only compress columns with height >= 3. Columns with height 1 or 2
+        are passed through unchanged. This is because the smallest compressor counter is a
+        Full Adder (3:2), which requires at least 3 inputs.
+
+        IMPLICATION:
+        If compression_goal requires height-1 or height-2 columns to be further compressed,
+        this method will create empty stages in an infinite loop. The calling code must
+        ensure compression_goal is achievable given this >= 3 constraint.
+
+        For accumulator configurations, this is handled by setting compression_goal to
+        final_adder.compression_goal (NOT final_adder.compression_goal - 1), since the
+        final_adder is designed to accept inputs up to its stated goal.
+        """
         new_stage = CompressionStage()
         stage_inputs = compressor.stages[-1].output_shape
         stage_outputs = Shape()
-        
+
         i = 0
         while i < max(len(stage_inputs), len(stage_outputs)):
             def cur_output_height():
@@ -94,7 +125,9 @@ class CompressorConstructor:
 
             def cur_input_height():
                 return stage_inputs[i] if len(stage_inputs) > i else 0
-                       
+
+            # NOTE: >= 3 condition means we cannot compress height-2 columns
+            # They will be passed through at lines below (Passthrough counters)
             while cur_input_height() >= 3 and cur_output_height() > compression_goal(i):
                 counter = self.schedule_counter(stage_inputs[i:], 
                                                 stage_outputs[i:], 

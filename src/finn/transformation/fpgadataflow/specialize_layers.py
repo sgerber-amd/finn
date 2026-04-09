@@ -259,6 +259,7 @@ def _mvu_rtl_possible(n, fpgapart, model):
     weight_width_in_range = 2 <= wdt.bitwidth() <= 8
 
     return inp_width_in_range and weight_width_in_range
+    
 
 
 def _vvu_rtl_possible(n, fpgapart):

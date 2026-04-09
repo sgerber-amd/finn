@@ -155,15 +155,20 @@ echo "  add_multi as COMP   : $COMP_TREE_COUNT"
 echo "  add_multi as TREE   : $GEN_TREE_COUNT"
 echo
 
-# Elaboration proof: check rtlsim dirs for compiled compressor modules (.sdb)
-# and dotp modules.  The rtlsim.prj links back to our codegen dirs.
+# Elaboration proof: check rtlsim dirs for compiled compressor modules (.sdb),
+# DSP modules, and HLS modules. The rtlsim.prj links back to our codegen dirs.
 CODEGEN_DIRS=$(grep -oE '/[^ ]*code_gen_ipgen_MVAU_rtl_0_[^/ ]+' "$LOG_FILE" | sort -u)
 CODEGEN_COUNT=$(echo "$CODEGEN_DIRS" | grep -c . || true)
 TEMP_BASE=$(echo "$CODEGEN_DIRS" | head -1 | sed 's|/code_gen_ipgen_.*||')
 
+# Also check for HLS MVAU (should NOT be present if RTL is used)
+HLS_CODEGEN_DIRS=$(grep -oE '/[^ ]*code_gen_ipgen_MVAU_hls_0_[^/ ]+' "$LOG_FILE" | sort -u)
+HLS_CODEGEN_COUNT=$(echo "$HLS_CODEGEN_DIRS" | grep -c . || true)
+
 RTLSIM_WITH_COMP=0
 RTLSIM_WITHOUT_COMP=0
-RTLSIM_WITH_DOTP=0
+RTLSIM_WITH_DSP_MODULE=0
+RTLSIM_WITH_HLS=0
 RTLSIM_TOTAL=0
 
 if [[ -n "$TEMP_BASE" && -d "$TEMP_BASE" ]]; then
@@ -182,49 +187,119 @@ if [[ -n "$TEMP_BASE" && -d "$TEMP_BASE" ]]; then
             (( RTLSIM_WITHOUT_COMP++ )) || true
         fi
 
-        # Check for dotp module compiled
-        if [[ -f "$rtlsim_dir/xsim.dir/work/mvu_vvu_8sx9_dsp58.sdb" ]]; then
-            (( RTLSIM_WITH_DOTP++ )) || true
+        # Check for DSP modules compiled (mvu_vvu_8sx9_dsp58, or mvu.sv with DSP lanes)
+        if [[ -f "$rtlsim_dir/xsim.dir/work/mvu_vvu_8sx9_dsp58.sdb" ]] || \
+           compgen -G "$rtlsim_dir/xsim.dir/work/mvu@*.sdb" >/dev/null 2>&1; then
+            (( RTLSIM_WITH_DSP_MODULE++ )) || true
+        fi
+
+        # Check for HLS modules (Matrix_Vector_Activate)
+        if compgen -G "$rtlsim_dir/xsim.dir/work/*matrix_vector_activate*.sdb" >/dev/null 2>&1; then
+            (( RTLSIM_WITH_HLS++ )) || true
         fi
     done
 fi
 
 echo "Elaboration proof (XSim compiled modules):"
-echo "  codegen dirs in log     : $CODEGEN_COUNT"
+echo "  RTL codegen dirs in log : $CODEGEN_COUNT"
+echo "  HLS codegen dirs in log : $HLS_CODEGEN_COUNT"
 echo "  rtlsim dirs matched     : $RTLSIM_TOTAL"
 echo "  with comp_*.sdb (COMP)  : $RTLSIM_WITH_COMP"
 echo "  without comp_*.sdb      : $RTLSIM_WITHOUT_COMP"
-echo "  with dotp .sdb          : $RTLSIM_WITH_DOTP"
+echo "  with DSP modules        : $RTLSIM_WITH_DSP_MODULE"
+echo "  with HLS modules        : $RTLSIM_WITH_HLS"
 echo
 
-echo "Mode-specific check:"
-if [[ "$MODE" == "dotp" ]]; then
-    if (( USE1_COUNT > 0 )); then
-        echo "  OK: dotp path detected (USE_COMPRESSOR=1 present)."
-    elif (( USE0_COUNT > 0 )); then
-        echo "  ERROR: only USE_COMPRESSOR=0 found (dotp path not active)."
-    else
-        echo "  WARNING: no USE_COMPRESSOR signal found in this log."
-    fi
-    if (( RTLSIM_WITH_DOTP > 0 )); then
-        echo "  OK: mvu_vvu_8sx9_dsp58 compiled into $RTLSIM_WITH_DOTP simulation(s)."
-    else
-        echo "  WARNING: no dotp module found in any rtlsim compilation."
-    fi
+echo "Mode-specific validation:"
+echo ""
+
+# Check for HLS contamination (should NEVER be present)
+if (( HLS_CODEGEN_COUNT > 0 )); then
+    echo "  ❌ FAIL: HLS codegen dirs found - RTL test contaminated with HLS!"
+    echo "          Found $HLS_CODEGEN_COUNT HLS directories"
+elif (( RTLSIM_WITH_HLS > 0 )); then
+    echo "  ❌ FAIL: HLS modules compiled in $RTLSIM_WITH_HLS simulation(s)"
+    echo "          Expected RTL-only implementation!"
 else
-    if (( COMP_TREE_COUNT > 0 )); then
-        echo "  OK: add_multi compressor tree branch used (as COMP found)."
-    elif (( GEN_TREE_COUNT > 0 )); then
-        echo "  WARNING: add_multi ran only TREE fallback (no COMP lines)."
+    echo "  ✓ PASS: No HLS contamination (RTL-only as expected)"
+fi
+echo ""
+
+if [[ "$MODE" == "dotp" ]]; then
+    echo "dotp_comp mode checks (compressors replace DSPs entirely):"
+    echo ""
+
+    # Check 1: USE_COMPRESSOR signal
+    if (( USE1_COUNT > 0 )); then
+        echo "  ✓ PASS: USE_COMPRESSOR=1 detected ($USE1_COUNT instances)"
+    elif (( USE0_COUNT > 0 )); then
+        echo "  ❌ FAIL: USE_COMPRESSOR=0 found - dotp_comp path NOT active"
+        echo "          Expected USE_COMPRESSOR=1 for WW<=4 AND AW<=4"
     else
-        echo "  WARNING: no add_multi COMP/TREE build lines found."
+        echo "  ⚠ WARN: No USE_COMPRESSOR signal found in log"
     fi
+
+    # Check 2: Compressor modules present
     if (( RTLSIM_WITH_COMP > 0 )); then
-        echo "  OK: comp_*.sdb elaborated in $RTLSIM_WITH_COMP simulation(s) — compressor proven executed."
+        echo "  ✓ PASS: comp_*.sdb found in $RTLSIM_WITH_COMP simulation(s)"
+        echo "          Compressor dot-product modules successfully compiled"
     elif (( RTLSIM_TOTAL > 0 )); then
-        echo "  ERROR: rtlsim dirs found but no comp_*.sdb — compressor not compiled."
+        echo "  ❌ FAIL: No comp_*.sdb found - compressors not compiled!"
     else
-        echo "  WARNING: no rtlsim dirs matched (stale or missing build artifacts)."
+        echo "  ⚠ WARN: No rtlsim dirs matched (stale/missing artifacts)"
+    fi
+
+    # Check 3: NO DSP modules (critical!)
+    if (( RTLSIM_WITH_DSP_MODULE > 0 )); then
+        echo "  ❌ FAIL: DSP modules found in $RTLSIM_WITH_DSP_MODULE simulation(s)"
+        echo "          dotp_comp should use ZERO DSPs - found DSP modules instead!"
+        echo "          This indicates compressor path failed to activate properly."
+    else
+        echo "  ✓ PASS: No DSP modules compiled (compressor-only as expected)"
+    fi
+
+else
+    echo "add_multi mode checks (DSP multiply + compressor lane reduction):"
+    echo ""
+
+    # Check 1: USE_COMPRESSOR should be 0
+    if (( USE0_COUNT > 0 )); then
+        echo "  ✓ PASS: USE_COMPRESSOR=0 detected ($USE0_COUNT instances)"
+        echo "          DSP path active as expected"
+    elif (( USE1_COUNT > 0 )); then
+        echo "  ❌ FAIL: USE_COMPRESSOR=1 found - switched to dotp_comp instead!"
+        echo "          Expected DSP path for WW>4 OR AW>4"
+    else
+        echo "  ⚠ WARN: No USE_COMPRESSOR signal found in log"
+    fi
+
+    # Check 2: DSP modules must be present
+    if (( RTLSIM_WITH_DSP_MODULE > 0 )); then
+        echo "  ✓ PASS: DSP modules found in $RTLSIM_WITH_DSP_MODULE simulation(s)"
+        echo "          Using DSPs for multiply operations as expected"
+    else
+        echo "  ❌ FAIL: No DSP modules found - DSP path not working!"
+    fi
+
+    # Check 3: add_multi compressor usage
+    if (( COMP_TREE_COUNT > 0 )); then
+        echo "  ✓ PASS: add_multi COMP branch used ($COMP_TREE_COUNT instances)"
+    elif (( GEN_TREE_COUNT > 0 )); then
+        echo "  ⚠ WARN: add_multi TREE fallback used ($GEN_TREE_COUNT instances)"
+        echo "          Expected COMP for SIMD>=4, got binary tree instead"
+    else
+        echo "  ⚠ WARN: No add_multi build lines found in logs"
+    fi
+
+    # Check 4: Compressor modules present for lane reduction
+    if (( RTLSIM_WITH_COMP > 0 )); then
+        echo "  ✓ PASS: comp_*.sdb found in $RTLSIM_WITH_COMP simulation(s)"
+        echo "          Compressor lane reduction successfully compiled"
+    elif (( RTLSIM_TOTAL > 0 )); then
+        echo "  ⚠ WARN: No comp_*.sdb - add_multi may have fallen back to trees"
+        echo "          (Could be OK if SIMD<4 or compressor not beneficial)"
+    else
+        echo "  ⚠ WARN: No rtlsim dirs matched (stale/missing artifacts)"
     fi
 fi
 echo

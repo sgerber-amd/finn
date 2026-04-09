@@ -31,9 +31,11 @@ class Connectable(Node):
     def has_source(self): return self.source is not None
 
 class Constant(Connectable):
-    def __init__(self, value): 
+    def __init__(self, value):
         super().__init__()
         self.value = str(value)
+
+    def accept(self, visitor) -> None: visitor.visit_constant(self)
 
 class Wire(Connectable):
     def __init__(self, desired_name = None):
@@ -341,8 +343,8 @@ class Bitmatrix(Node):
     def __init__(self, shape : Shape = Shape(), name: str = None):
         self._name = name
         self.prefix = ""
-        self.connectables = [[BitmatrixElement(self, idx, row) 
-                              for row in range(col)] 
+        self.connectables = [[BitmatrixElement(self, idx, row)
+                              for row in range(col)]
                               for idx, col in enumerate(shape)]
         super().__init__()
 

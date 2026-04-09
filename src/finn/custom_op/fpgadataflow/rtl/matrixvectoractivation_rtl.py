@@ -28,6 +28,7 @@
 
 import numpy as np
 import os
+import shutil
 
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
@@ -57,6 +58,9 @@ class MVAU_rtl(MVAU, RTLBackend):
             "comp_module_name": ("s", False, ""),
             # add_multi compressor module names, semicolon-separated
             "add_multi_comp_names": ("s", False, ""),
+            # add_multi compressor specs for synthesis aggregation
+            # Format: "N,W,D;N,W,D;..." e.g. "16,4,0;16,3,0;16,8,0"
+            "add_multi_comp_specs": ("s", False, ""),
             # Force disable LUT-based compressors (for benchmarking/comparison)
             # 0 = auto (use compressor when eligible), 1 = force disable
             "noCompressor": ("i", False, 0, {0, 1}),
@@ -188,7 +192,6 @@ class MVAU_rtl(MVAU, RTLBackend):
             "replay_buffer.sv",
             "mvu.sv",
             "mvu_vvu_8sx9_dsp58.sv",
-            "add_multi.sv",
         ]
         sourcefiles = [
             os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
@@ -202,19 +205,16 @@ class MVAU_rtl(MVAU, RTLBackend):
             sourcefiles.append(os.path.join(code_gen_dir, "dotp_comp.sv"))
             sourcefiles.append(os.path.join(comp_hdl_dir, "mul_comp_map.sv"))
             sourcefiles.append(os.path.join(code_gen_dir, comp_name + ".sv"))
-
-        # Add add_multi compressor files if generated
-        add_multi_names_str = self.get_nodeattr("add_multi_comp_names")
-        if add_multi_names_str:
-            add_multi_names = add_multi_names_str.split(";")
-            # Replace shared add_multi.sv with the patched per-node copy
-            sourcefiles = [
-                os.path.join(code_gen_dir, "add_multi.sv")
-                if f.endswith("add_multi.sv") else f
-                for f in sourcefiles
-            ]
-            for name in add_multi_names:
-                sourcefiles.append(os.path.join(code_gen_dir, name + ".sv"))
+            # dotp_comp path doesn't need add_multi.sv
+        else:
+            # DSP path: add_multi.sv always exists in code_gen_dir
+            # (either patched with comps or copy of template)
+            sourcefiles.append(os.path.join(code_gen_dir, "add_multi.sv"))
+            add_multi_names_str = self.get_nodeattr("add_multi_comp_names")
+            if add_multi_names_str:
+                # Add compressor modules if present
+                for name in add_multi_names_str.split(";"):
+                    sourcefiles.append(os.path.join(code_gen_dir, name + ".sv"))
 
         return sourcefiles
 
@@ -225,6 +225,7 @@ class MVAU_rtl(MVAU, RTLBackend):
 
         for f in sourcefiles:
             cmd.append("add_files -norecurse %s" % (f))
+
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_decoupled" or self.get_nodeattr("mlo_max_iter"):
             cmd.append(
@@ -329,6 +330,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         # DSP48E2 (UltraScale+) excluded: no compressor target exists for its
         # CARRY8 primitives — generator only supports Versal and 7-Series.
         return dsp_block in ("DSP58", "DSP48E1")
+        
 
     def _is_add_multi_comp_eligible(self, version, simd):
         """
@@ -377,13 +379,28 @@ class MVAU_rtl(MVAU, RTLBackend):
             code_gen_dict["$COMP_PIPELINE_DEPTH$"] = [str(result["comp_delay"])]
             code_gen_dict["$USE_COMPRESSOR$"] = [str(1)]
             self.set_nodeattr("comp_module_name", result["comp_name"])
-        elif self._is_add_multi_comp_eligible(version, simd):
-            result = generate_add_multi_comps(
-                fpgapart, version, simd, ww, aw, accu_width,
-                narrow_weights, code_gen_dir)
-            if result["comp_names"]:
-                self.set_nodeattr("add_multi_comp_names",
-                                  ";".join(result["comp_names"]))
+        else:
+            # Generate add_multi.sv (either patched with comps or template copy)
+            # Check if add_multi should use compressors (respects noCompressor attribute)
+            if self._is_add_multi_comp_eligible(version, simd):
+                result = generate_add_multi_comps(
+                    fpgapart, version, simd, ww, aw, accu_width,
+                    narrow_weights, code_gen_dir)
+                if result["comp_names"]:
+                    self.set_nodeattr("add_multi_comp_names",
+                                      ";".join(result["comp_names"]))
+                    # Store compressor specs for synthesis aggregation
+                    # Format: "N,W,D;N,W,D;..." e.g. "16,4,0;16,3,0;16,8,0"
+                    specs_str = ";".join(
+                        f"{n},{w},{d}" for n, w, d in result.get("comp_specs", [])
+                    )
+                    self.set_nodeattr("add_multi_comp_specs", specs_str)
+            else:
+                # Compressors disabled: copy template add_multi.sv (binary adder tree)
+                rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+                dest = os.path.join(code_gen_dir, "add_multi.sv")
+                shutil.copy(os.path.join(rtllib_dir, "add_multi.sv"), dest)
+                result = {"comp_names": [], "files": [dest]}
 
         # add general parameters to dictionary
         code_gen_dict["$MODULE_NAME_AXI_WRAPPER$"] = [self.get_verilog_top_module_name()]

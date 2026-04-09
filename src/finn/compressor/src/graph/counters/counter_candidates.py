@@ -509,16 +509,35 @@ class MuxCYAtom06:
         self.output_width = 2
 
     def build_luts(self):
+        # Matches VHDL atom06.vhdl - the (0,6) atom for 6 inputs from column 0
+        #
+        # VHDL lo LUT: INIT => x"6996_9669_9669_6996"
+        #   Uses all 6 inputs x0[5:0]
+        #   O6 = O5 = XOR of all 6 bits (parity function)
+        #
+        # VHDL hi LUT: INIT => x"177E_7EE8" & x"E8E8_E8E8"
+        #   Uses x0[4:0] with I5=1
+        #   O6 = complex carry propagation
+        #   O5 = 0xE8 repeated = FA_carry(I0,I1,I2)
+        #
+        # Note: This atom is currently DISABLED in MuxCYAtomCascadeCandidate
+        # because it needs further testing. The predicates below match the
+        # VHDL reference but the wiring/integration may need work.
+        #
+        # lo LUT: XOR of all 6 bits
         lut_1 = LUT6_2.fromPred(
-            lambda A0,A1,A2,A3,A4,A5: FA_sum(FA_sum(A0,A1,A2),A3,A4) ^ A5,
-            lambda A0,A1,A2,A3,A4,A5: FA_sum(FA_sum(A0,A1,A2),A3,A4),
-            "atom14_first"
+            lambda A0,A1,A2,A3,A4,A5: A0 ^ A1 ^ A2 ^ A3 ^ A4,        # O5 (5-input XOR)
+            lambda A0,A1,A2,A3,A4,A5: A0 ^ A1 ^ A2 ^ A3 ^ A4 ^ A5,   # O6 (6-input XOR)
+            "atom06_lo"
         )
+        # hi LUT: carry chain continuation
+        # O5 = FA_carry(A0,A1,A2) for the generate term
+        # O6 = more complex carry propagation (from VHDL 0x177E7EE8)
         lut_2 = LUT6_2.fromPred(
+            lambda A0,A1,A2,A3,A4,A5: FA_carry(A0,A1,A2),             # O5 -> DI
             lambda A0,A1,A2,A3,A4,A5: (FA_carry(FA_sum(A0,A1,A2),A3,A4) ^
-                                       FA_carry(A0,A1,A2)),
-            lambda A0,A1,A2,A3,A4,A5: FA_carry(A0,A1,A3),
-            "atom14_second"
+                                       FA_carry(A0,A1,A2)),           # O6 -> S
+            "atom06_hi"
         )
         return (lut_1, lut_2)
 
@@ -528,15 +547,38 @@ class MuxCYAtom14:
         self.width = 2
 
     def build_luts(self):
+        # Preußer FPL 2017: (1,4) atom - matches VHDL atom14.vhdl
+        #
+        # CARRY4 primitive: CO = S ? CI : DI, O = S ^ CI
+        #
+        # The key insight from the VHDL reference:
+        #   - O6 (S) computes the propagate signal: XOR of inputs
+        #   - O5 (DI) simply passes through the higher-weight input bit
+        #
+        # This is NOT an AND of the sum/carry with the input!
+        # The VHDL uses INIT patterns:
+        #   lo: x"6996_6996" & x"FF00_FF00"  (O6=0x6996, O5=0xFF00)
+        #   hi: x"17E8_17E8" & x"FF00_FF00"  (O6=0x17E8, O5=0xFF00)
+        #
+        # O5 = 0xFF00 = just passes I3 (the 4th input bit)
+        #
+        # BUGFIX (2026-04-08): Previous implementation incorrectly used:
+        #   O5 = FA_sum(A0,A1,A2) & A3  (WRONG - produces 0xFF96)
+        # Correct implementation:
+        #   O5 = A3  (just pass through - produces 0xFF00)
+        #
+        # lut_1 (position 0): processes x0[3:0] for s0/d0
         lut_1 = LUT6_2.fromPred(
-            lambda A0,A1,A2,A3,A4,_: FA_sum(A0,A1,A2) ^ A3,
-            lambda A0,A1,A2,A3,A4,_: A3,
-            "atom14_first"
+            lambda A0,A1,A2,A3,A4,_: A3,                      # O5 -> DI = x0[3]
+            lambda A0,A1,A2,A3,A4,_: FA_sum(A0,A1,A2) ^ A3,   # O6 -> S
+            "atom14_0"
         )
+        # lut_2 (position 1): processes x0[2:0] and x1 for s1/d1
+        # x1 is mapped to I3 (A3)
         lut_2 = LUT6_2.fromPred(
-            lambda A0,A1,A2,A3,A4,_: FA_carry(A0,A1,A2) ^ A3,
-            lambda A0,A1,A2,A3,A4,_: A3,
-            "atom14_second"
+            lambda A0,A1,A2,A3,A4,_: A3,                        # O5 -> DI = x1
+            lambda A0,A1,A2,A3,A4,_: FA_carry(A0,A1,A2) ^ A3,   # O6 -> S
+            "atom14_1"
         )
         return (lut_1, lut_2)
 
@@ -546,10 +588,22 @@ class MuxCYAtom2:
         self.width = 1
 
     def build_luts(self):
+        # Matches VHDL atom22.vhdl: INIT => x"6666_6666" & x"CCCC_CCCC"
+        #
+        # CARRY4: CO = S ? CI : DI, O = S ^ CI
+        #
+        # The VHDL uses:
+        #   O6 = 0x6666 = I0 ^ I1 (XOR / half-adder sum)
+        #   O5 = 0xCCCC = I1 (just passes through the higher-weight bit)
+        #
+        # BUGFIX (2026-04-08): Previous implementation used O5=A0.
+        # While this happens to produce correct results due to CARRY4
+        # logic simplification, it doesn't match the VHDL reference.
+        # Changed to O5=A1 for consistency with atom22.vhdl.
         lut = LUT6_2.fromPred(
-            lambda A0,A1,A2,A3,A4,_: FA_sum(A0,A1,A4),
-            lambda A0,A1,A2,A3,A4,_: FA_carry(A0,A1,A4),
-            "atom2_second"
+            lambda A0,A1,A2,A3,A4,_: A1,       # O5 -> DI = higher-weight bit
+            lambda A0,A1,A2,A3,A4,_: A0 ^ A1,  # O6 -> S (propagate)
+            "atom2"
         )
         return (lut,)
 
@@ -611,7 +665,6 @@ class MuxCYAtomCascade(Counter):
                 self.input_wires[idx][4].connect_to(luts[idx].I4)
                 idx += 2
             else:
-                breakpoint()
                 raise Exception("Error in construction of MuxCYAtoms")
                 
         # Connect outputs
@@ -638,10 +691,11 @@ class MuxCYAtomCascadeCandidate(CounterCandidate):
         i = 0
         while (i < 4):
             if i == 0:
-                if fits_col(i, 7):
-                    atoms.append(MuxCYAtom06())
-                    i += 2
-                elif fits_col(i, 5) and fits_col(i+1, 1):
+                # MuxCYAtom06 disabled for now - needs more debugging
+                # if fits_col(i, 7):
+                #     atoms.append(MuxCYAtom06())
+                #     i += 2
+                if fits_col(i, 5) and fits_col(i+1, 1):
                     atoms.append(MuxCYAtom14())
                     i += 2
                 elif fits_col(i, 3):
@@ -650,10 +704,11 @@ class MuxCYAtomCascadeCandidate(CounterCandidate):
                 else:
                     break
             elif i < 3:
-                if fits_col(i, 6):
-                    atoms.append(MuxCYAtom06())
-                    i += 2
-                elif fits_col(i, 4) and fits_col(i+1, 1):
+                # MuxCYAtom06 disabled for now
+                # if fits_col(i, 6):
+                #     atoms.append(MuxCYAtom06())
+                #     i += 2
+                if fits_col(i, 4) and fits_col(i+1, 1):
                     atoms.append(MuxCYAtom14())
                     i += 2
                 elif fits_col(i, 2):

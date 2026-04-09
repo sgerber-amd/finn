@@ -2,7 +2,7 @@ from .nodes import Shape, Wire, Logic, Stage, Bitmatrix
 from collections.abc import Iterable
 
 class AccumulatorStage(Stage):
-    def __init__(self, shape: Shape, final_adder, preceeding_pipeline_stages, 
+    def __init__(self, shape: Shape, final_adder, preceeding_pipeline_stages,
                  accumulator_width = None, enable = False):
         super().__init__()
         self.input_shape = shape
@@ -10,7 +10,8 @@ class AccumulatorStage(Stage):
             self.get_accumulator_width(accumulator_width))])
         self.instances = []
         self.input_wires = Bitmatrix(shape)
-        self.output_wires = Bitmatrix(self.output_shape) # TODO: Make Logic
+        self.output_wires = Bitmatrix(self.output_shape)
+        # TODO: Make Logic
         self.accumulator_width = self.get_accumulator_width(accumulator_width)
         self.final_adder_gen = final_adder
         self.preceeding_pipeline_stages = preceeding_pipeline_stages
@@ -50,16 +51,21 @@ class AccumulatorStage(Stage):
                                        en=en_wire)
 
         # Connect inputs to final adder
-        loop = self.delay_signal(final_adder.output_wires, cycles=1, 
+        loop = self.delay_signal(final_adder.output_wires, cycles=1,
                                  rst=rst_del, en=en_wire, init=0)
         in_ = self.delay_signal(self.input_wires, cycles=1, rst=en_neg_del,
                                 en=en_wire, init=0)
-        for col_loop, col_fa in zip(loop, final_adder.input_wires):
+
+        for col_idx, (col_loop, col_fa) in enumerate(zip(loop, final_adder.input_wires)):
             col_loop[0].connect_to(col_fa[0])
 
-        for col_in, col_fa in zip(in_, final_adder.input_wires):
-            for el_in, el_fa in zip(col_in, col_fa[1:]):
+        for col_idx, (col_in, col_fa) in enumerate(zip(in_, final_adder.input_wires)):
+            for elem_idx, (el_in, el_fa) in enumerate(zip(col_in, col_fa[1:])):
                 el_in.connect_to(el_fa)
+
+            # Check if we missed any connections
+            if len(col_in) < len(col_fa) - 1:
+                print(f"[WARNING] Col {col_idx}: col_in has {len(col_in)} elements but col_fa needs {len(col_fa)-1} inputs (missing {len(col_fa)-1-len(col_in)} connections)")
 
         # Connect final adder output to stage output
         for col_t, col_s in zip(self.output_wires, final_adder.output_wires):

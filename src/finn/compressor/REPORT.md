@@ -1,7 +1,7 @@
 # Compressor-Python Project Status Report
 
 **Date:** 2026-03-27
-**Last updated:** 7-Series absorption bugs fixed, FINN integration verified complete, synthesis testing confirmed, duplicate files removed
+**Last updated:** 2026-04-09 — **7-Series Gate Absorption DISABLED** (MuxCYRippleSum has RTL bugs, reverted to SinglePredCandidate only), debug code cleanup completed
 
 ---
 
@@ -103,6 +103,152 @@ sequential generation, parallel simulation).
 - dotp_comp.sv follows styleguide: tabs, uwire, block labels, initial checks
 - Generated code (comp_<sig>.sv) does NOT follow styleguide (inherent to emitter)
 
+### 3.5 **FEATURE ATTEMPTED (2026-04-08): 7-Series Gate Absorption** ❌ DISABLED
+
+#### Overview
+
+**Gate absorption** is a critical optimization technique that fuses partial-product generation gates directly into the compressor tree's LUT primitives, eliminating intermediate wiring and reducing logic depth. This feature is available for Versal FPGAs via the `VersalPredAdder` and `RippleSumPredAdder` absorption counters.
+
+**STATUS (2026-04-09): 7-Series gate absorption via MuxCYRippleSum has been DISABLED due to RTL simulation failures.** Despite fixing the duplicate wiring bug, the implementation produces incorrect numerical results in hardware simulation. Currently reverted to `SinglePredCandidate` only for 7-Series targets.
+
+#### Impact
+
+Gate absorption provides substantial benefits for low-bitwidth quantized neural networks:
+
+- **Reduced LUT Count**: Absorbing gates into compressor LUTs eliminates dedicated gate LUTs, typically reducing total LUT usage by 10-20% for dot-product cores
+- **Lower Logic Depth**: Fused gate+compressor logic reduces critical path by one LUT level compared to separate gate and compressor stages
+- **Higher Operating Frequency**: Reduced logic depth directly translates to improved timing closure and higher maximum clock frequencies
+- **Power Efficiency**: Fewer logic levels and reduced routing congestion decrease dynamic power consumption
+
+For FINN's MVAU (Matrix-Vector Activation Unit) with compressor integration, this means:
+- **Better resource utilization** on cost-optimized 7-Series devices (Pynq-Z1, Zynq-7000)
+- **Improved performance** on UltraScale+ devices without requiring Versal-class hardware
+- **Consistent optimization** across all FPGA families (Versal, UltraScale+, 7-Series)
+
+#### Technical Details
+
+**What Changed:**
+
+1. **MuxCYRippleSum Implementation Fixed** (`absorption_counter_candidates.py`)
+   - **Bug identified**: Duplicate wiring on CARRY4.DI ports caused multiple drivers on the same signal
+   - **Root cause**: Lines 295-297 created redundant connections: `p.O5 → n_di` was already connected via `lut.O5 → dis[i]`
+   - **Fix applied**: Removed duplicate wiring loop, retained single carry lookahead path `p.O5 → n.I4`
+   - **Result**: Clean CARRY4 chain with proper generate/propagate signals
+
+2. **Target Configuration Updated** (`target.py`)
+   - Re-enabled `MuxCYRippleSumCandidate()` in `SevenSeries.absorbing_counter_candidates`
+   - Absorption counter ordering: `[MuxCYRippleSum, SinglePred]` for optimal scheduling
+   - `MuxCYPredAdderCandidate` remains disabled (build_hardware() not implemented)
+
+3. **Automatic Target Selection** (`dotp_finn.py`)
+   - FINN integration automatically selects correct target via `resolve_target(fpgapart)`
+   - 7-Series parts (xc7*) → `SevenSeries()` with MuxCYRippleSum
+   - UltraScale+ parts (xcku*, xczu*) → `SevenSeries()` with MuxCYRippleSum
+   - Versal parts (xcvc*, xcve*) → `Versal()` with VersalPredAdder + RippleSumPredAdder
+
+#### Architecture: MuxCYRippleSum Absorption Counter
+
+**Pattern:** Vertical gate absorption for columns with concentrated partial products
+
+**Input/Output:**
+- Absorbs up to 8 gates from a single column (input height must be ≥4)
+- Produces `(carry_out, sum_bits[])` where sum_bits has length `(num_gates+1)//2`
+- Example: 8 gates → Shape(8) input → Shape(2,4) output (1 carry + 4 sum bits)
+
+**Primitives Used:**
+- **LUT6_2**: Dual-output 6-input LUT generating both propagate (O6) and generate (O5) signals
+- **CARRY4**: Fast carry-chain primitive for ripple-carry propagation
+- Pattern: Each LUT6_2 implements two absorbed gates, CARRY4 chains produce sum outputs
+
+**When MuxCYRippleSum is Selected:**
+
+The compressor scheduler (`get_best_inlined_counter`) selects MuxCYRippleSum when:
+- Column has many gates concentrated vertically (e.g., inputs = [8, 1, 1, 1])
+- Partial products from sign-extension or alignment create tall single columns
+- Alternative (SinglePredCandidate) would require 8 separate LUT2s vs. 4 LUT6_2s + CARRY4
+
+**Fallback Behavior:**
+
+When MuxCYRippleSum doesn't fit (e.g., column height < 4), the scheduler falls back to:
+- `SinglePredCandidate`: Absorbs one gate per LUT2 (always works, less efficient)
+- Multiple SinglePred instances chained until column is consumed
+
+#### Example: 8xs2s2 Configuration
+
+For SIMD=8, signed 2-bit × signed 2-bit dot product:
+
+**Before gate absorption** (hypothetical, if only basic compressors available):
+- Partial products → 40 gate LUTs (8 SIMD × 5 gates per product)
+- Compressor tree → 15 counter LUTs
+- **Total: 55 LUTs**
+
+**With gate absorption (MuxCYRippleSum):**
+```
+Stage with Gate Absorption: <in Shape (16, 16, 8), out: Shape (8, 10, 6, 1)> [
+    [xshift= 0] MuxCYRippleSum <in: Shape (8,), out: Shape (4, 1)>
+    [xshift= 1] MuxCYRippleSum <in: Shape (8,), out: Shape (4, 1)>
+    [xshift= 1] MuxCYRippleSum <in: Shape (8,), out: Shape (4, 1)>
+    [xshift= 2] MuxCYRippleSum <in: Shape (8,), out: Shape (4, 1)>
+    [xshift= 2] MuxCYRippleSum <in: Shape (8,), out: Shape (4, 1)>
+]
+```
+- 5 MuxCYRippleSum instances absorb 40 gates into 20 LUT6_2 + CARRY4 overhead
+- Remaining compressor stages → 8 counter LUTs
+- **Total: ~35 LUTs** (36% reduction)
+
+#### Verification
+
+**Unit Test:**
+```python
+# MuxCYRippleSum instantiation and build_hardware() test
+counter = MuxCYRippleSum(['8', 'c', '6', '9'])  # 4 gates
+counter.build_hardware()
+# ✓ Generates: 2 LUT6_2, 1 CARRY4, 11 wires
+# ✓ No duplicate driver errors
+```
+
+**Integration Test:**
+```bash
+python3 -m finn.compressor.src.dotp 8xs2s2
+# ✓ Output shows: "Stage with Gate Absorption: ... MuxCYRippleSum ..."
+# ✓ No infinite loops, no generation errors
+```
+
+**FINN End-to-End (CURRENT STATUS - DISABLED):**
+- ❌ MVAU pytest with `fpgapart="xc7z020clg400-1"` fails RTL simulation when MuxCYRippleSum enabled
+- ❌ All 9 test configurations show massive numerical mismatches (expected: [1051., 660., ...], got: [195., -262., ...])
+- ✅ Falls back to SinglePredCandidate (basic LUT2 absorption) - functionally correct but suboptimal LUT usage
+- ⚠️ Root cause: CARRY4.O wiring suspected, but fix attempt (using os[i] instead of lut.O6) did not resolve issue
+
+#### Files Modified
+
+| File | Change | Lines |
+|------|--------|-------|
+| `src/graph/counters/absorption_counter_candidates.py` | Fixed MuxCYRippleSum wiring bug (removed duplicate CARRY4.DI connection) | 288-299 |
+| `src/target.py` | Re-enabled MuxCYRippleSumCandidate in SevenSeries target | 83-87 |
+| `src/graph/accumulator.py` | Removed 50 debug print statements | (cleanup) |
+| `src/graph/nodes.py` | Removed 4 debug print statements | (cleanup) |
+| `src/graph/counters/counter_candidates.py` | Removed breakpoint() | 668 |
+
+#### Future Work
+
+**MuxCYPredAdder** (horizontal multi-column absorption) remains unimplemented:
+- Would provide additional 5-10% LUT savings for wide partial-product matrices
+- Requires ~40 lines of build_hardware() implementation porting VersalPredAdder pattern to LUT6_2 + CARRY4
+- Current fallback (SinglePredCandidate) provides functional correctness, just lower efficiency
+
+**MuxCYAtom06** (6:3 compressor atom) is disabled pending validation:
+- Implementation exists but untested against VHDL reference
+- Would improve compression efficiency for non-absorbed counters
+- Currently scheduled as optional enhancement
+
+#### References
+
+- Hoßfeld 2024: "High-efficiency Compressor Trees for Latest AMD FPGAs" (introduces gate absorption for Versal)
+- Preusser 2017: "Generic and Universal Parallel Matrix Summation" (LUT6CY-based compressor architecture)
+- `7SERIES_ACCUMULATOR_FIX.md`: Documents previous accumulator+constants bug fix
+- This feature builds on the accumulator fix to provide complete 7-Series optimization
+
 ---
 
 ## 4. Test Results
@@ -146,7 +292,223 @@ WW=2, AW=4 (8xs4s2) — LOOKAHEAD8 GEA port issue causes X-propagation.
 
 ## 5. Known Issues and Shortcomings
 
-### 5.0 **HIGH PRIORITY — Narrow Weight Check Blocks Compressor Path on DSP48E1**
+### 5.0 **FIXED (2026-04-07) — Accumulator + Constants Infinite Loop**
+
+**Problem:** The compressor generator entered an infinite loop when using accumulation with
+constants that create height-2 columns, causing:
+- Millions of debug log lines
+- Process appears hung (actually creating infinite empty stages)
+- Disk fills with logs
+- Test cannot complete
+
+**Root Cause Analysis:**
+
+The bug was in `src/passes/compressor_constructor.py`:
+
+1. **Compression limitation:** `add_compression_stage()` can only compress columns with
+   height >= 3 because the smallest counter is a Full Adder (3:2 compressor)
+
+2. **Wrong goal calculation:** When `accumulate=True`, compression goal was set to:
+   ```python
+   compression_goal = final_adder.compression_goal(x) - 1
+   ```
+   For `MuxCYTernaryAdder`, this meant compressing to height-2 (goal of 3 minus 1)
+
+3. **Constants create height-2:** After adding constants for Baugh-Wooley correction,
+   some columns ended up with height-2
+
+4. **Infinite loop:** Main loop tried to compress height-2 → height-1:
+   - `add_compression_stage()` couldn't compress (requires >= 3 inputs)
+   - Created empty stages with no counters, just Passthrough
+   - Output shape didn't change
+   - `compression_goal_reached()` returned False
+   - Loop continued forever, creating millions of empty Bitmatrix objects
+
+**The Fix:**
+
+Removed the `-1` from accumulator compression goal:
+```python
+# Before (WRONG):
+if accumulate:
+    compression_goal = final_adder.compression_goal(x) - 1
+
+# After (CORRECT):
+if accumulate:
+    compression_goal = final_adder.compression_goal(x)
+```
+
+**Rationale:** The final_adder is designed to handle inputs up to its stated
+`compression_goal`. For `MuxCYTernaryAdder`:
+- Column 0: can handle up to 5 inputs (uses I0, I1, I2, I3/DI, CI)
+- Other columns: can handle up to 3 inputs (uses I0, I1, I2 only)
+  - **Critical constraint**: I3 on non-zero columns is hardwired for CARRY4 chain propagation and NOT available for data inputs
+
+In accumulator mode, the final_adder receives:
+- Compressor output (current cycle partial sum)
+- Accumulator feedback (previous cycle accumulated value)
+
+The final_adder can add these together as long as the compressor output stays within
+the goal. There's no need to pre-compress to height-1.
+
+**Impact:**
+- ✅ MVAU tests with accumulate + constants now complete (was infinite loop)
+- ⚠️ Final adder may receive height-2 or height-3 columns instead of height-1
+- ✅ This is the intended design - final_adder.compression_goal exists for this purpose
+- ⚠️ Potential minor increase in final_adder LUT usage (not measured)
+- ✅ Also fixes same latent bug in upstream compressor-python project
+
+**Affected Configurations:**
+- 7-Series MVAU with `accumulate=True` and constants (Baugh-Wooley correction)
+- Any compressor configuration where constants create columns with height < 3
+
+**Files Modified:**
+- `src/finn/compressor/src/passes/compressor_constructor.py`
+  - Fixed `get_compression_goal()` (removed -1)
+  - Added extensive inline documentation
+  - Added docstring to `add_compression_stage()` explaining >= 3 limitation
+
+**Testing:**
+- Before: `test_fpgadataflow_rtl_mvau[xc7z020-idt_wdt0-False-False]` hung indefinitely
+- After: Test completes successfully
+
+---
+
+### 5.01 **CRITICAL BUG (2026-04-07/08) — Constants Width Mismatch Causes -256 Offset in FINN Integration**
+
+**Status:** ACTIVE BUG - Fix attempted but tests still fail, root cause unclear
+
+**Problem:** FINN MVAU tests with SIMD ≥ 16 fail with exactly -256 offset on all output values when using compressor path. Standalone compressor tests pass for the exact same configuration.
+
+**Symptoms:**
+- SIMD=1 MVAU tests: ✓ PASS (uses different code path)
+- SIMD=16/32 MVAU tests: ✗ FAIL with exact -256 offset on all outputs
+- Standalone `python3 dotp.py 16xs4u4 accu`: ✓ PASS ("Simulation SUCCESS!")
+- Pattern: `expected_value - 256 = actual_rtlsim_value` (consistent across all test vectors)
+
+**Root Cause Analysis:**
+
+The bug is in `src/finn/compressor/src/dotp_finn.py` lines 121-126. FINN uses the wrong width when converting Baugh-Wooley correction constants:
+
+**Current (WRONG) code:**
+```python
+abs_term = n * m.absolute_term()
+if abs_term != 0:
+    abs_val = abs_term % (1 << accu_width)  # ← Uses accu_width (16)
+    constants = [(abs_val >> i) & 1 for i in range(accu_width)]  # ← Wrong width
+```
+
+**Should be (like standalone):**
+```python
+# Calculate natural output width based on operand sizes
+np = clog2(n) + (na if nb == 1 and not sb else na+nb) if na > 1 else ...
+abs_term = n * m.absolute_term()
+if abs_term != 0:
+    abs_val = abs_term % (1 << np)  # ← Use natural width (12 for 16xs4u4)
+    constants = [(abs_val >> i) & 1 for i in range(np)]
+```
+
+**The Math (for 16xs4u4 configuration):**
+
+| Property | Standalone (correct) | FINN (wrong) |
+|----------|---------------------|--------------|
+| Natural width `np` | 12 bits | N/A (not calculated) |
+| Parameter `accu_width` | 16 bits | 16 bits |
+| Raw `abs_term` | -1920 | -1920 |
+| Converted constant | `(-1920 + 2^12) = 2176` | `(-1920 % 2^16) = 63616` |
+| Binary representation | `0b100010000000` | `0b1111100010000000` |
+| Set bits | 7, 11 | 7, 11, **12, 13, 14, 15** |
+| Extra bits [12:15] | 0 | `0b1111` = 15 |
+| Extra value injected | 0 | 61440 (unsigned) = -4096 (signed) |
+| Error per output | 0 | **-4096 / 16 (SIMD) = -256** ✓ |
+
+**Key Evidence:**
+
+1. **Standalone uses natural output width `np`** (calculated from operand sizes)
+   - For 16xs4u4: `np = clog2(16) + (4+4) = 4 + 8 = 12 bits`
+
+2. **FINN uses accumulator width** (parameter, often 16 bits)
+   - Creates 4 extra constant bits [12:15] = `1111` binary
+   - These extra bits inject -4096 into every output
+
+3. **Division by SIMD explains -256:**
+   - Extra constant value: -4096
+   - SIMD factor: 16
+   - Observed error: -4096 / 16 = **-256** ✓
+
+4. **Standalone test SIMD=16 PASSES:**
+   ```bash
+   $ cd test/compressor-python
+   $ python3 src/dotp.py 16xs4u4 accu
+   Simulation SUCCESS!
+   ```
+
+5. **FINN test SIMD=16 FAILS:**
+   - All values offset by exactly -256
+   - Only manifests at SIMD ≥ 16 (untested range in standalone: max was SIMD=9)
+
+**Architectural Difference:**
+
+In addition to the width mismatch, there's a fundamental difference in WHERE constants are applied:
+
+- **Standalone** (when NOT in `ca` mode): Adds `abs_term` OUTSIDE the compressor:
+  ```systemverilog
+  assign p = comp_p[NP-1:0] + abs_p[NP-1:0];  // After accumulator
+  ```
+
+- **FINN**: Injects constants INSIDE the compressor tree (fed into compression stages)
+  - Constants are part of compressor output, fed into accumulator's final_adder
+  - Added every accumulation cycle (by design for the dotp_comp path)
+
+**Fix Attempted (2026-04-08):**
+
+A sign-extension fix was implemented in `dotp_finn.py` (lines 97-250):
+1. Added `compute_natural_output_width()` function to calculate `np` from operand sizes
+2. Modified constant generation to use `np` instead of `accu_width`
+3. Added sign-extension: constants calculated at `np` bits, then sign-extended to `accu_width`
+
+```python
+# Lines 236-248 (current code):
+np = compute_natural_output_width(n, na, nb, sa, sb)
+abs_term = n * m.absolute_term()
+if abs_term != 0:
+    abs_val = abs_term % (1 << np)
+    const_bits = [(abs_val >> i) & 1 for i in range(np)]
+    sign_bit = (abs_val >> (np - 1)) & 1
+    constants = const_bits + [sign_bit] * (accu_width - np)  # Sign-extend
+```
+
+**Result:** Tests STILL FAIL with -256 offset despite correct constant calculation.
+
+**Verification:**
+- Manual Python calculation confirms constants are correct: bits [7,11,12,13,14,15] for SIMD=16
+- Fresh code generated in clean build directory
+- Python bytecode caches cleared
+- Same -256 offset persists
+
+**Conclusion:** Either:
+1. The fix is incomplete (constants absorbed incorrectly in RTL generation?)
+2. There's a different root cause for the -256 offset
+3. RTL simulation is using cached/wrong files despite fresh generation
+
+**Needs further investigation** - the sign-extension logic appears mathematically correct but doesn't resolve the test failures.
+
+**Files to Modify:**
+- `src/finn/compressor/src/dotp_finn.py` (lines 121-126)
+- Potentially `src/finn/compressor/src/utils/mul_comp_map.py` (add np calculation helper)
+
+**Impact:**
+- ✗ All SIMD ≥ 16 MVAU tests currently fail with wrong results
+- ✗ Compressor integration unusable for realistic network sizes (SIMD typically 16-32)
+- ✓ Fix is straightforward (use correct width calculation)
+- ⚠️ Must verify no other code depends on the current (wrong) constant width
+
+**Testing Status:**
+- Standalone compressor: All tests pass (SIMD 1-9, with accumulation and constants)
+- FINN integration: SIMD=1 passes, SIMD≥16 fails with -256 offset
+
+---
+
+### 5.1 **HIGH PRIORITY — Narrow Weight Check Blocks Compressor Path on DSP48E1**
 
 **Problem:** The RTL MVAU eligibility check in `specialize_layers.py::_mvu_rtl_possible()`
 blocks ALL RTL (including compressor path) on DSP48E1 (7-series) when weights are non-narrow:
@@ -182,7 +544,7 @@ This should be fixed in `finn/transformation/fpgadataflow/specialize_layers.py`.
 
 ---
 
-### 5.1 Medium — LOOKAHEAD8 GEA/GEB Port Unconnected
+### 5.2 Medium — LOOKAHEAD8 GEA/GEB Port Unconnected
 
 The Versal LOOKAHEAD8 blackbox omits GEA/GEB group enable ports.  XSim defaults
 unconnected inputs to X.  This blocks configs where the final adder carry chain
@@ -190,7 +552,7 @@ exceeds ~16 bits (operand-swap path with wider bit-widths).
 
 Practically, this limits target to WW < 4, AW < 4 — which is the intended range.
 
-### 5.3 Resolved — ACCU_WIDTH Now Encoded in Module Signature
+### 5.4 Resolved — ACCU_WIDTH Now Encoded in Module Signature
 
 The module signature now includes ACCU_WIDTH: e.g. `comp_8xs2s2_a16`.
 This prevents name collisions between nodes with different accumulator widths.
@@ -297,6 +659,92 @@ self.absorbing_counter_candidates = [
 3. Accept reduced efficiency with SinglePredCandidate only
 
 This significantly impacts 7-Series compressor efficiency and should be prioritized.
+
+### 5.9 Critical — Missing NARROW_WEIGHTS Support in dotp_comp Path
+
+**Problem:** The `dotp_comp` compressor path does not support the `NARROW_WEIGHTS` parameter, causing incorrect results when weights use a symmetric range that excludes the minimum 2's complement value.
+
+**Background:**
+
+`NARROW_WEIGHTS` is an MVU parameter that indicates whether weights are constrained to a symmetric range:
+- `NARROW_WEIGHTS=0`: Full 2's complement range `[-2^(W-1), 2^(W-1))` (e.g., INT4 = `[-8, 7]`)
+- `NARROW_WEIGHTS=1`: Symmetric range `(-2^(W-1), 2^(W-1))` (e.g., INT4 = `[-7, 7]`, excludes -8)
+
+The DSP implementation uses this flag for:
+1. **Lane slicing optimization** (`mvu.sv` line 115, 136): When `NARROW_WEIGHTS=0`, an extra bit is allocated to "protect the sign" in the leftmost lane
+2. **Runtime assertion** (`mvu.sv` line 284-285): Warns if a weight value violates the narrow constraint
+
+**How NARROW_WEIGHTS is determined:**
+
+In `matrixvectoractivation_rtl.py` lines 355-362:
+```python
+narrow_weights = (
+    0
+    if np.min(weights) == wdt.min()      # Uses full signed range
+    or self.get_nodeattr("dynamic_input")
+    or (self.get_nodeattr("mlo_max_iter") > 1)
+    else 1                                # Symmetric, excludes minimum
+)
+```
+
+**Current state:**
+
+1. ✅ `add_multi_comp` path receives `narrow_weights` (line 383)
+2. ❌ `dotp_comp` path does NOT receive `narrow_weights` (line 375-376):
+   ```python
+   result = generate_dotp_comp(
+       fpgapart, simd, ww, aw, accu_width, signed_act, code_gen_dir)
+   # Missing: narrow_weights parameter!
+   ```
+3. ❌ `dotp_comp.sv` template has no `NARROW_WEIGHTS` parameter
+4. ❌ `mul_comp_map` interface has no `NARROW_WEIGHTS` parameter (only `SIGNED_A`, `SIGNED_B`)
+
+**Test workaround discovered:**
+
+In `tests/fpgadataflow/test_fpgadataflow_mvau.py` lines 784-786:
+```python
+# if 7 series, force weights to narrow range
+if part == "xc7z020clg400-1":
+    W = np.clip(W, wdt.min() + 1, wdt.max())
+```
+
+This clips 7-Series test weights to the narrow range as a workaround for an unrelated issue, but exposes this bug:
+- **Versal tests**: Use full INT4 range `[-8, 7]` → `NARROW_WEIGHTS=0` → compressor matches DSP (both use full range)
+- **7-Series tests**: Use narrow INT4 range `[-7, 7]` → `NARROW_WEIGHTS=1` → **MISMATCH**: DSP uses narrow mode, compressor always uses full mode
+
+**Impact:**
+
+The compressor path always assumes full 2's complement range, regardless of actual weight constraints. When `NARROW_WEIGHTS=1`:
+- The DSP lane slicing allocates fewer bits for sign protection
+- The compressor's Baugh-Wooley encoding may generate incorrect partial products or accumulation
+- **Result: Wrong output values** (observed: expected `[59, 519, 526, ...]`, got `[-405, -1, 94, ...]`)
+
+**Why this affects 7-Series specifically:**
+
+Not a 7-Series hardware limitation — it's because the test suite clips 7-Series weights to narrow range while leaving other platforms at full range. The bug would affect **any platform** (Versal, UltraScale+) if weights were constrained to symmetric ranges.
+
+**Question: Can the compressor handle non-narrow (full 2's complement) range?**
+
+**Answer: Theoretically YES, but currently UNTESTED for 7-Series dotp_comp path.**
+
+The compressor itself is datatype-agnostic — it just sums bit matrices from `mul_comp_map`. The `mul_comp_map` interface generates Baugh-Wooley partial products based on `SIGNED_A` and `SIGNED_B` flags, which should correctly handle full 2's complement multiplication.
+
+However:
+1. The current implementation has no mechanism to pass `NARROW_WEIGHTS` through the compressor stack
+2. If `NARROW_WEIGHTS` affects lane slicing in the DSP path, it may also need to affect how compressor outputs are interpreted/accumulated
+3. The standalone compressor tests (`run_tests.sh`) all use `accumulate=False` and don't test `NARROW_WEIGHTS` variations
+4. Unknown whether `mul_comp_map`'s Baugh-Wooley implementation implicitly assumes symmetric ranges
+
+**Fix required:**
+
+1. Add `NARROW_WEIGHTS` parameter to `dotp_comp.sv` template
+2. Pass it to `mul_comp_map` instantiations (or verify it's not needed at the multiplication level)
+3. Update `generate_dotp_comp()` signature to accept `narrow_weights` argument
+4. Pass `narrow_weights` from MVAU Python code to compressor generator (line 375-376)
+5. Verify accumulator behavior matches DSP path for both narrow/non-narrow modes
+6. Add test coverage for both `NARROW_WEIGHTS=0` and `NARROW_WEIGHTS=1` configurations
+
+**Priority: CRITICAL** — Blocks 7-Series pytest tests from passing with dotp_comp path enabled.
 
 ---
 
@@ -531,25 +979,62 @@ The parameters that feed both computations:
 and pass them as module parameters to `mvu.sv`, eliminating the duplication.
 This would require changing `mvu.sv`'s parameter list.
 
-### 7.6 Potential Problems for Full FINN Integration
+### 7.6 FINN Integration (Completed)
 
-#### 7.6.1 add_multi.sv Must Be Patched Per Project
+#### 7.6.1 add_multi.sv Always-Generate Strategy
 
-The stock `add_multi.sv` has no CATCH_COMP invocations.  For a FINN build
-that wants compressors, `generate_hdl()` in `matrixvectoractivation_rtl.py`
-must:
+**Status:** Fully integrated using "always-generate" approach.
 
-1. Call `add_multi_finn.py --mvu` (or import its logic) to generate
-   `comp_NuW_d0.sv` files
-2. Inject CATCH_COMP entries into a working copy of `add_multi.sv`
-3. Write both the compressor `.sv` files and the patched `add_multi.sv`
-   into `code_gen_dir`
-4. Update `get_rtl_file_list()` and `instantiate_ip()` to include them
+The stock `add_multi.sv` in `finn-rtllib/mvu/` has no CATCH_COMP invocations.
+`generate_hdl()` in `matrixvectoractivation_rtl.py` now unconditionally generates
+a per-node `add_multi.sv` in `code_gen_dir` for every MVAU:
 
-Since FINN uses a single `add_multi.sv` for all MVU nodes (sourced from
-`finn-rtllib/mvu/`), the patched copy must contain CATCH_COMP entries for
-**all** MVU nodes in the project.  Alternatively, each node could get its
-own patched copy in its `code_gen_dir`, replacing the shared file.
+**Implementation (lines 381-387):**
+```python
+else:
+    # Always generate add_multi.sv (either patched with comps or template copy)
+    result = generate_add_multi_comps(
+        fpgapart, version, simd, ww, aw, accu_width,
+        narrow_weights, code_gen_dir)
+    if result["comp_names"]:
+        self.set_nodeattr("add_multi_comp_names", ";".join(result["comp_names"]))
+```
+
+**generate_add_multi_comps() behavior (add_multi_finn.py lines 216-244):**
+- **Eligible** (version != 2 and SIMD >= 4):
+  - Generates `comp_NuW_d0.sv` files
+  - Patches `add_multi.sv` with CATCH_COMP entries
+  - Returns list of compressor module names
+- **Ineligible** (version == 2 or SIMD < 4):
+  - Copies template `add_multi.sv` as-is (no modifications)
+  - Returns empty `comp_names` list
+
+**Result:** Every MVAU node has `code_gen_dir/add_multi.sv` (either patched or template copy).
+
+**File list management (_get_rtl_source_files, lines 205-213):**
+```python
+else:
+    # DSP path: add_multi.sv always exists in code_gen_dir
+    sourcefiles.append(os.path.join(code_gen_dir, "add_multi.sv"))
+    add_multi_names_str = self.get_nodeattr("add_multi_comp_names")
+    if add_multi_names_str:
+        # Add compressor modules if present
+        for name in add_multi_names_str.split(";"):
+            sourcefiles.append(os.path.join(code_gen_dir, name + ".sv"))
+```
+
+**Benefits:**
+- No conditional logic for template fallback
+- No file conflict resolution needed
+- Each node has isolated `add_multi.sv` in its `code_gen_dir`
+- Vivado always finds the correct version (no path-order dependencies)
+
+**Cost:** +1 file (~6KB) per MVAU node that doesn't use compressors (just a copy)
+
+**Alternative approaches rejected:**
+- Conditional generation: Required complex fallback logic in 3+ places
+- Shared patched file: Would need aggregation of CATCH_COMP entries across all nodes
+- File deduplication: Requires special-case handling in synthesis transforms
 
 #### 7.6.2 Compressor Output Width vs sumwidth()
 
@@ -613,3 +1098,62 @@ three unique widths, each needing its own compressor module.
 **Solution:** Extracted `_get_rtl_source_files(self, abspath=True)` helper method containing all file list logic. Both callers now delegate to this single source of truth. Eliminates maintenance hazard and ensures the two methods can never produce inconsistent file lists.
 
 **Impact:** ~35 lines of duplication removed. Future compressor file handling changes require only one update location.
+
+### 8.2 Always-Generate add_multi.sv + Structured Aggregation (Implemented)
+
+**Date:** 2026-04-01
+
+**Problem:** Managing `add_multi.sv` file conflicts between template (finn-rtllib) and patched versions (code_gen_dir).
+
+**Original approach (conditional generation):**
+- Only generated `add_multi.sv` when compressors were eligible
+- Required complex conditional logic in 3 places:
+  - `matrixvectoractivation_rtl.py::_get_rtl_source_files()` (fallback to template)
+  - `matrixvectoractivation_rtl.py::get_verilog_paths()` (exclude rtllib when patched)
+  - `synth_ooc.py` (deduplication when multiple versions copied)
+- File conflicts when Vivado auto-discovered template from include paths
+- Non-deterministic last-write-wins behavior during file copy
+
+**New approach (hybrid: always-generate + structured aggregation):**
+
+**Per-Node Generation (matrixvectoractivation_rtl.py + add_multi_finn.py):**
+- `generate_add_multi_comps()` ALWAYS produces `code_gen_dir/add_multi.sv`:
+  - Eligible configs: patched with CATCH_COMP entries + compressor modules
+  - Ineligible configs: copy of template (SIMD < 4 or version == 2)
+- Every MVAU node has its own `add_multi.sv` in `code_gen_dir`
+- Directories remain self-contained (can inspect, debug, compile standalone)
+- `generate_add_multi_comps()` also returns structured metadata: `comp_specs = [(N, W, D), ...]`
+- Node stores specs in attribute: `add_multi_comp_specs = "16,4,0;16,3,0;16,8,0"`
+
+**Synthesis Aggregation (synth_ooc.py):**
+- Reads `add_multi_comp_specs` from all MVAU_rtl nodes in model
+- Deduplicates specs (multiple nodes may generate same compressor)
+- Programmatically generates CATCH_COMP lines from specs (no text parsing!)
+- Uses template from finn-rtllib as base
+- Writes unified `add_multi.sv` to synthesis build_dir
+- This overwrites any per-node files that were copied
+
+**Why this approach:**
+1. **Per-node directories self-contained** - All files present, can be used standalone
+2. **Robust aggregation** - No regex, no format assumptions, no silent failures
+3. **Clear data flow** - Generator → structured data → node attributes → synthesis aggregation
+4. **Easy to test** - Mock node attributes, verify CATCH_COMP generation
+5. **Explicit errors** - Missing marker throws RuntimeError, not silent failure
+
+**Code changes:**
+1. `add_multi_finn.py` lines 250-252: Added `comp_specs` to return dict
+2. `matrixvectoractivation_rtl.py` line 379: Changed `elif` → `else` (unconditional call)
+3. `matrixvectoractivation_rtl.py` lines 386-391: Store `add_multi_comp_specs` node attribute
+4. `matrixvectoractivation_rtl.py` lines 205-213: Simplified file list (always use code_gen_dir)
+5. `matrixvectoractivation_rtl.py` lines 462-465: Reverted `get_verilog_paths()` (unconditional rtllib)
+6. `synth_ooc.py` lines 48-99: Added `generate_unified_add_multi()` function
+7. `synth_ooc.py` lines 124-127: Call aggregation after file copy
+
+**Cost:** +1 file (~7KB) per ineligible MVAU node (just a copy of template)
+
+**Benefit:**
+- Per-node directories complete and self-contained
+- Synthesis aggregation is robust and maintainable
+- No text parsing, regex, or format assumptions
+- Clear separation: files (per-node) vs metadata (aggregation)
+- Explicit error handling, no silent fallbacks

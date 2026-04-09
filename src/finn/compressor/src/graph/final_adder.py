@@ -1,6 +1,6 @@
 from abc import abstractstaticmethod
 from typing import List
-from .nodes import Counter
+from .nodes import Counter, Constant
 from ..utils.shape import Shape
 from .primitives import LUT5, LUT6CY, LOOKAHEAD8, LUT6_2, CARRY4
 
@@ -331,10 +331,11 @@ class MuxCYTernaryAdder(FinalAdder):
             c4p.CO.elements[-1].connect_to(c4n.CI)
 
         ## Connect inputs
-        for idx, lut in enumerate(luts):
-            try_connect(lambda: self.input_wires[idx][0].connect_to(lut.I0))
-            try_connect(lambda: self.input_wires[idx][1].connect_to(lut.I1))
-            try_connect(lambda: self.input_wires[idx][2].connect_to(lut.I2))
+        # Only connect up to the number of available input columns
+        for idx, lut in enumerate(luts[:len(self.input_wires)]):
+            try_connect(lambda idx=idx, lut=lut: self.input_wires[idx][0].connect_to(lut.I0))
+            try_connect(lambda idx=idx, lut=lut: self.input_wires[idx][1].connect_to(lut.I1))
+            try_connect(lambda idx=idx, lut=lut: self.input_wires[idx][2].connect_to(lut.I2))
         try_connect(lambda: self.input_wires[0][3].connect_to(luts[0].I3))
         try_connect(lambda: self.input_wires[0][3].connect_to(dis[0]))
         try_connect(lambda: self.input_wires[0][4].connect_to(cis[0]))

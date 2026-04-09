@@ -219,6 +219,13 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
     Generate add_multi compressor cores and patch add_multi.sv.
     This is the high-level entry point called by FINN's generate_hdl().
 
+    ALWAYS generates add_multi.sv in output_dir, either:
+    - Patched version with CATCH_COMP entries if compressors are eligible
+    - Copy of template if ineligible (SIMD < 4 or version == 2)
+
+    This ensures every node has code_gen_dir/add_multi.sv, eliminating
+    conditional logic in file management.
+
     Parameters
     ----------
     fpgapart : str
@@ -235,13 +242,24 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
     Returns
     -------
     dict with keys:
-        comp_names : list[str] — generated module names (empty if nothing generated)
+        comp_names : list[str] — generated module names (empty if ineligible)
         files      : list[str] — paths of all generated/patched files
     """
 
+    rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+    patched_path = os.path.join(output_dir, "add_multi.sv")
+
+    # Check eligibility (same logic as _is_add_multi_comp_eligible)
+    if version == 2 or simd < 4:
+        # Ineligible: just copy template as-is
+        import shutil
+        shutil.copy(os.path.join(rtllib_dir, "add_multi.sv"), patched_path)
+        return {"comp_names": [], "files": [patched_path]}
+
+    # Eligible: generate compressors and patch add_multi.sv
     target = resolve_target(fpgapart)
 
-    #This is currently a parallel implementation of the lo_width computation in mvu.sv's sliceLanes() function.  
+    #This is currently a parallel implementation of the lo_width computation in mvu.sv's sliceLanes() function.
     #The resulting lo_width values determine the compressor input Shapes, so we need to compute them here in Python at generation time.
     #Must be kept in SYNC.
     widths = lo_widths_from_mvu_params(version, ww, aw, accu_width, narrow_weights)
@@ -257,17 +275,15 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
                 output_dir=output_dir)
             generated[key] = (name, delay)
 
-    if not generated:
-        return {"comp_names": [], "files": []}
-
     # Copy add_multi.sv to output_dir and inject CATCH_COMP lines
-    rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
     with open(os.path.join(rtllib_dir, "add_multi.sv"), "r") as f:
         add_multi_src = f.read()
 
     catch_lines = ""
+    comp_specs = []
     for (_n, _w), (name, delay) in generated.items():
         catch_lines += "\t`CATCH_COMP(%d,%d,%d)\n" % (_n, _w, delay)
+        comp_specs.append((_n, _w, delay))
 
     marker = "\t// FINN_GENERATED_COMP_ENTRIES\n"
     if marker not in add_multi_src:
@@ -276,7 +292,6 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
             "Has the file been modified?")
     add_multi_src = add_multi_src.replace(marker, catch_lines + marker)
 
-    patched_path = os.path.join(output_dir, "add_multi.sv")
     with open(patched_path, "w") as f:
         f.write(add_multi_src)
 
@@ -285,6 +300,7 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
 
     return {
         "comp_names": [name for (name, _delay) in generated.values()],
+        "comp_specs": comp_specs,  # [(N, ARG_WIDTH, DELAY), ...]
         "files": [patched_path] + comp_files,
     }
 

@@ -11,6 +11,7 @@ from .graph.counters.absorption_counter_candidates import VersalPredAdderCandida
 from .graph.counters.absorption_counter_candidates import RippleSumPredAdderCandidate
 from .graph.counters.absorption_counter_candidates import SinglePredCandidate
 from .graph.counters.absorption_counter_candidates import MuxCYPredAdderCandidate
+from .graph.counters.absorption_counter_candidates import MuxCYRippleSumCandidate
 from .graph.final_adder import MuxCYTernaryAdder, FinalAdder, QuaternaryAdder
 from typing import List
 
@@ -80,7 +81,7 @@ class SevenSeries(Target):
                                    SixThreeCandidate(), MuxCYAtomCascadeCandidate()]
         self.final_adder = MuxCYTernaryAdder
         self.absorbing_counter_candidates = [
+            # MuxCYRippleSumCandidate(),  # TODO: Fix CARRY4.O wiring - still produces wrong results
+            # MuxCYPredAdderCandidate(),  # TODO: build_hardware() not implemented
             SinglePredCandidate(),
-            # MuxCYPredAdderCandidate() - build_hardware() not implemented
-            # RippleSumPredAdderCandidate() - TODO: debug infinite loop issue
         ]

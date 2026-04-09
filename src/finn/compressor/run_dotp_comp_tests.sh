@@ -22,8 +22,10 @@ echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS WORK_DIR=$WORK_DIR"
 
 source "$SRC_DIR/lib/test_common.sh"
 
-# Test configs: --pe PE --simd SIMD --ww WW --aw AW --accu_width ACCU [--signed_activations]
+# Test configs: --pe PE --simd SIMD --ww WW --aw AW --accu_width ACCU [--signed_activations] [--target TARGET]
+# Default target is Versal; add --target 7-Series for 7-Series tests
 TESTS=(
+	# Versal tests (original)
 	"--pe 2 --simd 8 --ww 1 --aw 1 --accu_width 16"
 	"--pe 2 --simd 8 --ww 1 --aw 1 --accu_width 16 --signed_activations"
 	"--pe 2 --simd 8 --ww 2 --aw 1 --accu_width 16"
@@ -32,10 +34,15 @@ TESTS=(
 	"--pe 2 --simd 16 --ww 2 --aw 2 --accu_width 16 --signed_activations"
 	"--pe 1 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations"
 	"--pe 4 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations"
+	# 7-Series tests (new) - covers failing FINN integration configs
+	"--pe 1 --simd 1 --ww 4 --aw 4 --accu_width 16 --target 7-Series"
+	"--pe 2 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations --target 7-Series"
+	"--pe 1 --simd 8 --ww 2 --aw 2 --accu_width 16 --signed_activations --target 7-Series"
 )
 
 function parse_config {
-	local pe="" simd="" ww="" aw="" accu="" signed_act=""
+	local pe="" simd="" ww="" aw="" accu="" signed_act="" target_suffix="" target_name="Versal"
+	CFG_TARGET_FLAG=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--pe)    pe="$2"; shift 2;;
@@ -44,11 +51,20 @@ function parse_config {
 			--aw)    aw="$2"; shift 2;;
 			--accu_width) accu="$2"; shift 2;;
 			--signed_activations) signed_act="_sa"; CFG_SIGNED_FLAG="--signed_activations"; shift;;
+			--target) CFG_TARGET_FLAG="--target $2"; target_name="$2"; target_suffix="_$(echo "$2" | tr ' ' '_')"; shift 2;;
 			*) shift;;
 		esac
 	done
 	CFG_PE="$pe"; CFG_SIMD="$simd"; CFG_WW="$ww"; CFG_AW="$aw"; CFG_ACCU="$accu"
-	CFG_LABEL="pe${pe}_simd${simd}_ww${ww}_aw${aw}_accu${accu}${signed_act}"
+	CFG_LABEL="pe${pe}_simd${simd}_ww${ww}_aw${aw}_accu${accu}${signed_act}${target_suffix}"
+	# Sanitize label for SystemVerilog identifiers (replace hyphens with underscores)
+	CFG_LABEL="${CFG_LABEL//-/_}"
+	# Set FPGA part based on target
+	if [[ "$target_name" == "7-Series" ]]; then
+		CFG_PART="xc7z020clg400-1"  # Pynq-Z1
+	else
+		CFG_PART="xcvc1902-vsva2197-2MP-e-S"  # Versal VCK190
+	fi
 }
 
 function run_sim {
@@ -81,7 +97,7 @@ for args in "${TESTS[@]}"; do
 	# shellcheck disable=SC2086
 	gen_out=$(python3 -m finn.compressor.src.dotp_finn \
 		--simd "$CFG_SIMD" --ww "$CFG_WW" --aw "$CFG_AW" \
-		--accu_width "$CFG_ACCU" $CFG_SIGNED_FLAG \
+		--accu_width "$CFG_ACCU" $CFG_SIGNED_FLAG $CFG_TARGET_FLAG \
 		--dotp-template hdl/dotp_comp_template.sv \
 		--dotp-output-name dotp_comp.sv \
 		-o "$out_dir" 2>&1)
@@ -101,7 +117,7 @@ for args in "${TESTS[@]}"; do
 	    hdl/dotp_comp_tb_template.sv > "$out_dir/dotp_comp_${label}_tb.sv"
 
 	# Expand TCL
-	sed -e "s/{label}/$label/g" -e "s|{src_dir}|$SRC_DIR|g" \
+	sed -e "s/{label}/$label/g" -e "s|{src_dir}|$SRC_DIR|g" -e "s/{part}/$CFG_PART/g" \
 	    hdl/dotp_comp_template.tcl > "$out_dir/dotp_comp_${label}.tcl"
 done
 echo

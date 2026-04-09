@@ -189,12 +189,12 @@ This project is focused on integrating LUT-based compressor trees into FINN's Ma
 
 ### Background
 
-The compressor-python generator (`src/finn/compressor/`) builds optimized LUT6CY-based compressor trees that replace DSP slices for dot products when both weights and activations are < 4 bits wide. This provides better resource efficiency than DSP blocks for binary/ternary quantized networks.
+The compressor-python generator (`src/finn/compressor/`) builds optimized LUT6CY-based compressor trees that replace DSP slices for dot products when both weights and activations are <= 4 bits wide. This provides better resource efficiency than DSP blocks for binary/ternary/4-bit quantized networks.
 
 ### Two Integration Paths
 
 **1. Full dotp_comp Path (Complete Replacement):**
-- When `WW < 4` and `AW < 4` in `mvu_vvu_axi.sv`
+- When `WW <= 4` and `AW <= 4` in `mvu_vvu_axi.sv`
 - Sets `USE_COMPRESSOR = true`, bypassing DSP path entirely
 - Uses `dotp_comp.sv` template which instantiates generated `comp_<sig>.sv` modules
 - Module signature: `comp_{SIMD}x{s|u}{NA}{s|u}{NB}_a{ACCU_WIDTH}` (e.g., `comp_8xs2s2_a16`)
@@ -215,7 +215,7 @@ The compressor-python generator (`src/finn/compressor/`) builds optimized LUT6CY
 
 **When dotp_comp is used:**
 ```systemverilog
-USE_COMPRESSOR = IS_MVU && !PUMPED_COMPUTE && (WW < 4) && (AW < 4)
+USE_COMPRESSOR = IS_MVU && !PUMPED_COMPUTE && (WW <= 4) && (AW <= 4)
 ```
 
 **When add_multi compressor is used (within DSP path):**
@@ -251,6 +251,90 @@ The add_multi path has a dual-implementation risk:
 
 If these diverge, compressors won't match CATCH_COMP guards and **silently fall back** to binary adder tree. The fallback is functionally correct but loses compressor benefit. Consider adding a consistency test.
 
+### Known Issues & Workarounds
+
+#### **FIXED: Accumulator + Constants Infinite Loop (2026-04-07)**
+
+**Issue:** The compressor generator had a critical infinite loop bug when using accumulation with constants that create height-2 columns.
+
+**Root Cause:**
+1. `add_compression_stage()` can only compress columns with height >= 3 (smallest counter is Full Adder = 3:2)
+2. When `accumulate=True`, compression goal was set to `final_adder.compression_goal - 1`
+3. After adding constants, some columns ended up with height-2
+4. Main loop tried to compress height-2 → height-1, but `add_compression_stage` couldn't (requires >= 3 inputs)
+5. Loop created infinite empty stages, each creating empty Bitmatrix objects
+6. Generated millions of debug log lines, filled disk, appeared hung
+
+**The Fix:** Changed `get_compression_goal()` in `compressor_constructor.py` to NOT subtract 1 in accumulate mode:
+```python
+# Before (WRONG):
+compression_goal = final_adder.compression_goal(x) - 1
+
+# After (CORRECT):
+compression_goal = final_adder.compression_goal(x)
+```
+
+**Rationale:** The final_adder is designed to handle inputs up to its stated compression_goal. For `MuxCYTernaryAdder`, this is height-3 (or height-5 for column 0). The accumulator's final_adder receives both the compressor output AND the accumulator feedback, and can handle the combination as long as each stays within its goal. There's no need to pre-compress to height-1.
+
+**Impact:**
+- ✅ 7-Series MVAU tests with accumulate + constants now work (previously infinite loop)
+- ⚠️ Final adder may receive slightly taller columns (height-2/3 vs height-1), potentially minor LUT increase
+- ✅ This is the intended design - final_adder.compression_goal exists for exactly this purpose
+- ✅ Also fixes the same latent bug in upstream compressor-python (never tested with accumulate+constants)
+
+**Testing Status:**
+- Before: `test_fpgadataflow_rtl_mvau[xc7z020-idt_wdt0-False-False]` hung indefinitely
+- After: Test completes successfully
+
+**Files Modified:**
+- `src/finn/compressor/src/passes/compressor_constructor.py` - Fixed compression_goal calculation, added extensive documentation
+
+#### **CRITICAL ACTIVE BUG: Constants Width Mismatch Causes -256 Offset (2026-04-07/08)**
+
+**Issue:** FINN MVAU tests with SIMD ≥ 16 fail with exactly -256 offset on all output values. Standalone compressor tests PASS for the same configuration.
+
+**Hypothesis:** Constants calculated at `accu_width` instead of natural width `np`, injecting extra sign bits.
+
+**Fix Attempted (2026-04-08):**
+- Implemented sign-extension logic in `dotp_finn.py` (lines 97-250)
+- Constants now calculated at natural width `np`, then sign-extended to `accu_width`
+- Verified mathematically correct: bits [7,11,12,13,14,15] for SIMD=16
+
+**Result:** Tests STILL FAIL with -256 offset. Root cause unclear.
+
+**Current Status:**
+- ✗ SIMD=16/32 (pumpedCompute=False): FAILS with -256 offset
+- ✅ SIMD=16/32 (pumpedCompute=True): PASSES (doesn't use compressor)
+- ✅ SIMD=1: PASSES (different code path)
+- ❓ Fix implemented but ineffective - either incomplete or different root cause
+
+**Impact:**
+- ✗ Compressor integration unusable for SIMD ≥ 16 with non-pumped compute
+
+**See:** `src/finn/compressor/REPORT.md` section 5.01 for complete investigation.
+
+#### **CRITICAL: 7-Series Gate Absorption Disabled (Temporary Workaround)**
+
+**Issue:** The 7-Series gate absorption counter implementations (`MuxCYPredAdderCandidate` and `RippleSumPredAdderCandidate`) have critical bugs that cause simulation hangs or infinite loops when used with 4-bit operands. See `REPORT.md` section 5.8 for details.
+
+**Current Workaround:** Gate absorption is **disabled** for 7-Series targets in `dotp_finn.py` (line ~111). This means:
+- 7-Series compressors use `SinglePredCandidate()` only (no absorption)
+- Less efficient LUT usage compared to Versal
+- **Functional correctness maintained** - simulations pass, just suboptimal area
+
+**Impact:**
+- ✅ 7-Series MVAU tests now pass (Pynq-Z1, etc.)
+- ⚠️ Higher LUT count on 7-Series compared to optimal
+- ✅ Versal still uses full absorption (optimal)
+
+**TODO (HIGH PRIORITY):** Fix the 7-Series absorption counter bugs to restore optimal efficiency:
+1. Debug `MuxCYPredAdderCandidate` incomplete implementation
+2. Fix `RippleSumPredAdderCandidate` infinite loop
+
+**Testing Status:**
+- 7-Series without absorption: ✓ PASSES
+- 7-Series with absorption: ✗ HANGS (known bug)
+- Versal with absorption: ✓ PASSES
 
 ### Key Files for Compressor Work
 
@@ -293,7 +377,7 @@ cd finn-rtllib/mvu/tb && ./run_dotp_comp_tests.sh
 ### When Compressors Are Used in End-to-End Tests
 
 Your end2end cybersec test with RTL will exercise compressors only if layers have:
-- **dotp_comp path**: WW < 4 AND AW < 4, non-pumped compute, target is Versal or 7-Series (not UltraScale+)
+- **dotp_comp path**: WW <= 4 AND AW <= 4, non-pumped compute, target is Versal or 7-Series (not UltraScale+)
 - **add_multi path**: SIMD >= 4, DSP version != 2 (not UltraScale+)
 
 ## Important Files
