@@ -123,7 +123,7 @@ def run_build(model_path, output_dir, board, use_rtl, synth_only, synth_clk_peri
         specialize_layers_config_file=specialize_config_path,
         folding_config_file=folding_config_path,
         standalone_thresholds=standalone_thresholds,
-        verbose=False,
+        verbose=True,
     )
 
     return build_dataflow_cfg(model_path, cfg)
@@ -378,14 +378,32 @@ def main():
     board = board_cfg["board"]
     fpga_part = board_cfg["part"]
 
-    # Low-bitwidth configs where compressors are beneficial via dotp_comp
+    # 7-Series configs (MW, MH, PE, SIMD, WW, AW)
     configs = [
-        #(16, 16, 2, 8, 2, 2),
-        #(32, 32, 4, 8, 2, 2),
-        #(16, 16, 2, 8, 4, 4),
-        #(32, 32, 4, 8, 4, 4),
-        (16, 16, 2, 8, 4, 2),
+        (32, 18, 1, 1, 4, 4),   # Minimal parallelism
+        (32, 18, 9, 1, 4, 4),   # PE only
+        (32, 18, 1, 16, 2, 2),  # SIMD only, 2-bit
+        (32, 18, 1, 16, 4, 4),  # SIMD only, 4-bit
+        (32, 18, 9, 16, 2, 2),  # Balanced, 2-bit
+        (32, 18, 9, 16, 4, 4),  # Balanced, 4-bit
+        (32, 18, 18, 16, 4, 4), # PE-max, 4-bit
+        (32, 18, 1, 32, 2, 2),  # SIMD-max, 2-bit
+        (32, 18, 1, 32, 4, 4),  # SIMD-max, 4-bit
+        (32, 18, 9, 32, 4, 4),  # Balanced, 4-bit
+        (32, 18, 9, 16, 8, 8),  # DSP-based reference
     ]
+
+    # Versal configs (for VCK190 board)
+    # configs = [
+    #     (600, 64, 8, 8, 2, 2),     # Cybsec layer 1
+    #     (64, 64, 8, 8, 2, 2),      # Cybsec layers 2-3
+    #     (64, 1, 1, 8, 2, 2),       # Cybsec layer 4
+    #     (128, 128, 128, 128, 4, 4),# Large depth (UltraRAM)
+    #     (32, 18, 1, 16, 4, 4),     # Cross-platform comparison
+    #     (32, 18, 9, 16, 2, 2),     # Cross-platform comparison
+    #     (32, 18, 9, 32, 4, 4),     # SIMD=32, 4-bit
+    #     (32, 18, 9, 16, 8, 8),     # DSP58 reference
+    # ]
 
     # Default to FINN_BUILD_DIR/hls_vs_compressor_benchmark
     if args.work_dir:
@@ -403,6 +421,9 @@ def main():
     print(f"Work: {work_dir}\n")
 
     all_results = []
+    json_path = os.path.join(work_dir, "results.json")
+    csv_path = os.path.join(work_dir, "results.csv")
+
     for i, (mw, mh, pe, simd, ww, aw) in enumerate(configs):
         print(f"[{i+1}/{len(configs)}] mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}...", flush=True)
         label, results = run_comparison(
@@ -411,19 +432,16 @@ def main():
         )
         all_results.append((label, results))
 
+        # Save incremental results after each config
+        with open(json_path, "w") as f:
+            json.dump(all_results, f, indent=2)
+        write_csv(all_results, csv_path)
+
     print("\n" + "=" * 80)
     print(format_table(all_results))
-
-    # Save JSON
-    json_path = os.path.join(work_dir, "results.json")
-    with open(json_path, "w") as f:
-        json.dump(all_results, f, indent=2)
-    print(f"\nSaved JSON: {json_path}")
-
-    # Save CSV
-    csv_path = os.path.join(work_dir, "results.csv")
-    write_csv(all_results, csv_path)
-    print(f"Saved CSV: {csv_path}")
+    print(f"\nFinal results saved to:")
+    print(f"  JSON: {json_path}")
+    print(f"  CSV: {csv_path}")
 
     if not args.keep and not args.work_dir:
         print(f"Cleaning up {work_dir}")

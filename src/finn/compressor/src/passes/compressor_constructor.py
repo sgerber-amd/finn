@@ -14,9 +14,7 @@ class CompressorConstructor:
                                 (constants[x] if x < len(constants) else 0))
     
     def get_compression_goal(self, final_adder, accumulate, constants):
-        # Initial compression goal is the final_adder's capacity.
-        # For accumulate mode, we do a second pass after adding constants
-        # to ensure room for feedback.
+        # Two-pass strategy for accumulate: compress to goal, add constants, then post-check
         compression_goal = final_adder.compression_goal
         return self.adjust_compression_goal_for_constants(compression_goal, constants)        
 
@@ -98,22 +96,7 @@ class CompressorConstructor:
     
     def add_compression_stage(self, compressor: Compressor, compression_goal,
                               counter_candidates):
-        """Add a compression stage to reduce column heights toward the compression goal.
-
-        IMPORTANT LIMITATION:
-        This method can only compress columns with height >= 3. Columns with height 1 or 2
-        are passed through unchanged. This is because the smallest compressor counter is a
-        Full Adder (3:2), which requires at least 3 inputs.
-
-        IMPLICATION:
-        If compression_goal requires height-1 or height-2 columns to be further compressed,
-        this method will create empty stages in an infinite loop. The calling code must
-        ensure compression_goal is achievable given this >= 3 constraint.
-
-        For accumulator configurations, this is handled by setting compression_goal to
-        final_adder.compression_goal (NOT final_adder.compression_goal - 1), since the
-        final_adder is designed to accept inputs up to its stated goal.
-        """
+        """Add a compression stage. Cannot compress columns with height < 3 (Full Adder = 3:2)."""
         new_stage = CompressionStage()
         stage_inputs = compressor.stages[-1].output_shape
         stage_outputs = Shape()
@@ -126,8 +109,6 @@ class CompressorConstructor:
             def cur_input_height():
                 return stage_inputs[i] if len(stage_inputs) > i else 0
 
-            # NOTE: >= 3 condition means we cannot compress height-2 columns
-            # They will be passed through at lines below (Passthrough counters)
             while cur_input_height() >= 3 and cur_output_height() > compression_goal(i):
                 counter = self.schedule_counter(stage_inputs[i:], 
                                                 stage_outputs[i:], 
@@ -182,12 +163,8 @@ class CompressorConstructor:
         s = GateAbsorbedStage()
         cur_shape = input_shape
         cur_gates = gates[:]
-        iteration_count = 0
         for idx in range(len(input_shape)):
             while cur_shape[idx] > 0:
-                iteration_count += 1
-                if iteration_count > 1000:
-                    raise RuntimeError(f"Infinite loop in construct_absorption_stage: idx={idx}, cur_shape={cur_shape}, absorption_counters={[type(c).__name__ for c in absorption_counters]}")
                 best = self.get_best_inlined_counter(
                     cur_shape[idx:], cur_gates[idx:], absorption_counters)
                 cur_shape = cur_shape - (best.input_shape << idx)

@@ -294,13 +294,18 @@ if __name__ == "__main__":
     # 7-Series has no genINT8 fast path, so 8×8 uses standard mvu.sv with add_multi
     # add_multi compressors only activate when SIMD >= 4
     configs = [
-        # Format: (mw, mh, pe, simd, ww, aw)
+        (16, 16, 1, 8, 4, 2),   # WW=4 AW=2, NUM_LANES=5, lo_widths=[6,6,5,5,16]
 
-        # 8-bit × 8-bit (7-Series uses mvu.sv, has multi-lane slicing with add_multi)
-        (8, 8, 1, 4, 8, 8),      # Standard config for 7-Series
-
-        # Mixed precision variant
-        (8, 8, 1, 4, 8, 4),      # 8-bit weights × 4-bit activations
+        """
+        # (MW, MH, PE, SIMD, WW, AW)
+        (16, 16, 2, 2, 8, 8),    # SIMD<4: binary tree baseline
+        (32, 18, 9, 4, 8, 8),    # SIMD=4: minimal compressor
+        (32, 18, 9, 8, 8, 8),    # SIMD=8: common config
+        (32, 18, 9, 16, 8, 8),   # SIMD=16: higher fanin
+        (32, 18, 9, 32, 8, 8),   # SIMD=32: maximum fanin
+        (32, 18, 9, 8, 4, 4),    # 4-bit: less overflow
+        (32, 18, 9, 8, 6, 6),    # 6-bit: medium
+        (32, 18, 9, 8, 8, 8),    # 8-bit: full width"""
     ]
 
     # Default work directory

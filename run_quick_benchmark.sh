@@ -22,13 +22,13 @@ echo ""
 mkdir -p "$WORK_DIR"
 
 python -m finn.compressor.benchmark_hls_vs_compressor \
-    --board vck190 \
+    --board pynq-z1 \
     --synth-only \
     --timing-search \
     --keep \
     --synth-clk-period-ns 10.0 \
     --work-dir "$WORK_DIR" \
-    2>&1 | tee "$WORK_DIR/run.log"please 
+    2>&1 | tee "$WORK_DIR/run.log" 
 
 echo ""
 echo "=========================================="

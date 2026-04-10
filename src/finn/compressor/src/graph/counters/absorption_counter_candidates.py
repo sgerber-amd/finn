@@ -87,63 +87,8 @@ class MuxCYPredAdder(GateAbsorptionCounter):
 
     def build_hardware(self):
         # TODO: Implement 7-series gate absorption using LUT6_2 + CARRY4
-        # See DEBUG_7SERIES_ABSORPTION.md for implementation attempts
+        # Needs CARRY4 wiring similar to MuxCYRippleSum but for multi-column case
         raise NotImplementedError("MuxCYPredAdder.build_hardware() not yet implemented for 7-series")
-
-        # --- COMMENTED OUT: Experimental implementation (buggy) ---
-        # from ..primitives import LUT6_2, CARRY4
-        # from ..nodes import Constant
-        #
-        # # Create LUT6_2 for each gate-absorbed column
-        # # Pin assignment matches VersalPredAdder:
-        # #   p1(A0,A1): I0=normal, I1=complement
-        # #   p2(A2,A3): I2=normal, I3=complement
-        # #   carry: I4
-        # luts = []
-        # for i in range(len(self.gates)):
-        #     p1 = self.gates[i][0]
-        #     p2 = self.gates[i][1]
-        #     lut = LUT6_2.fromPred(
-        #         lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: p1(A0,A1) & p2(A2,A3),  # O5 = generate (CARRY4.DI)
-        #         lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: p1(A0,A1) ^ p2(A2,A3),  # O6 = propagate (CARRY4.S)
-        #     )
-        #     self.input_wires[i][0].connect_to(lut.I0)
-        #     self.input_wires[i][1].connect_to(lut.I2)
-        #     self.input_wires_complementary[i][0].connect_to(lut.I1)
-        #     self.input_wires_complementary[i][1].connect_to(lut.I3)
-        #
-        #     luts.append(lut)
-        #
-        # # Create CARRY4 chains (one CARRY4 per 4 LUTs)
-        # c4s = [CARRY4() for _ in range((len(luts) + 3) // 4)]
-        #
-        # # Extract all DI, S, CI, O, CO elements
-        # dis = [el for c4 in c4s for el in c4.DI.elements]
-        # ss = [el for c4 in c4s for el in c4.S.elements]
-        # cis = [c4.CI for c4 in c4s]
-        # os = [el for c4 in c4s for el in c4.O.elements]
-        # cos = [el for c4 in c4s for el in c4.CO.elements]
-        #
-        # # Connect CARRY4 chains together
-        # for c4p, c4n in zip(c4s, c4s[1:]):
-        #     c4p.CO.elements[-1].connect_to(c4n.CI)
-        #
-        # # Connect LUT outputs to CARRY4
-        # for i, lut in enumerate(luts):
-        #     lut.O5.connect_to(dis[i])  # Generate → CARRY4.DI
-        #     lut.O6.connect_to(ss[i])   # Propagate → CARRY4.S
-        #
-        # # First CARRY4 gets zero carry-in
-        # Constant("1'b0").connect_to(cis[0])
-        #
-        # # Connect CARRY4.O to sum outputs (like MuxCYTernaryAdder)
-        # for i, o in enumerate(os[:len(luts)]):
-        #     o.connect_to(self.output_wires[i][0])
-        #
-        # # Final carry out from last CARRY4.CO
-        # cos[len(luts)-1].connect_to(self.output_wires[len(luts)][0])
-        #
-        # self.instances += luts + c4s
 
 class VersalPredAdderCandidate(GateAbsorptionCounterCandidate):
     def extend_to_fit(self, inputs: Shape, 

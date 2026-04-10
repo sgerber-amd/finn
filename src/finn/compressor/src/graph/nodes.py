@@ -35,8 +35,6 @@ class Constant(Connectable):
         super().__init__()
         self.value = str(value)
 
-    def accept(self, visitor) -> None: visitor.visit_constant(self)
-
 class Wire(Connectable):
     def __init__(self, desired_name = None):
         super().__init__()

@@ -15,41 +15,26 @@ from .graph.counters.absorption_counter_candidates import MuxCYRippleSumCandidat
 from .graph.final_adder import MuxCYTernaryAdder, FinalAdder, QuaternaryAdder
 from typing import List
 
-_VERSAL_PREFIXES_4 = ("xcvc", "xcve", "xcvp", "xcvm", "xqvc", "xqvm")
-_VERSAL_PREFIXES_5 = ("xqrvc", "xcv80")
-
-
-def is_versal_part(fpgapart):
-    """Return True if *fpgapart* identifies a Versal device."""
-    return (
-        fpgapart[0:4] in _VERSAL_PREFIXES_4
-        or fpgapart[0:5] in _VERSAL_PREFIXES_5
-    )
-
-
 def resolve_target(fpgapart):
     """Map a Vivado FPGA part string to a compressor Target object.
 
     Returns Versal() for Versal parts, SevenSeries() otherwise.
     """
-    if is_versal_part(fpgapart):
+    versal_prefixes_4 = ("xcvc", "xcve", "xcvp", "xcvm", "xqvc", "xqvm")
+    versal_prefixes_5 = ("xqrvc", "xcv80")
+    if fpgapart[0:4] in versal_prefixes_4 or fpgapart[0:5] in versal_prefixes_5:
         return Versal()
     return SevenSeries()
 
 
-_TARGET_NAMES = {
-    "Versal": lambda: Versal(),
-    "7-Series": lambda: SevenSeries(),
-}
-
-
 def resolve_target_name(name):
     """Map a CLI target name ('Versal', '7-Series') to a Target object."""
-    factory = _TARGET_NAMES.get(name)
-    if factory is None:
-        raise ValueError(
-            f"Unsupported target: {name!r}. Choose from: {list(_TARGET_NAMES)}")
-    return factory()
+    if name == "Versal":
+        return Versal()
+    elif name == "7-Series":
+        return SevenSeries()
+    else:
+        raise ValueError(f"Unsupported target: {name!r}. Choose from: ['Versal', '7-Series']")
 
 
 class Target(ABC):

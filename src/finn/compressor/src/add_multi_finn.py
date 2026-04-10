@@ -28,13 +28,9 @@ Outputs:
 """
 
 import os
-import sys
 import math
 import argparse
-
-# Allow running as standalone script from src/ directory
-if __name__ == "__main__" and __package__ is None:
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import shutil
 
 from .main import generate_compressor
 from .target import resolve_target, resolve_target_name, Versal, SevenSeries
@@ -44,16 +40,12 @@ from .utils.shape import Shape
 # ---------------------------------------------------------------------------
 # Python replica of mvu.sv::sliceLanes()
 #
-# This must mirror the SV implementation exactly.  Any change to sliceLanes()
-# in mvu.sv requires updating this function as well.  The $warning guard in
+# This must mirror the SV implementation exactly. Any change to sliceLanes()
+# in mvu.sv requires updating this function as well. The $warning guard in
 # add_multi.sv catches divergence at simulation time.
-
-# This oustourced computation is required as lane width is relevant to the compressor input Shape and thus needs to be known at generation time.
 #
-# TODO:
-# Strategy for future improvement change (questionable if better): remove sliceLanes() from mvu.sv entirely
-# and have Python compute OFFSETS once, passing them as module parameters.
-# This eliminates the dual-implementation risk but changes the mvu.sv interface.
+# This outsourced computation is required as lane width is relevant to the
+# compressor input Shape and thus needs to be known at generation time.
 
 def clog2(n):
     """Ceiling of log2, matching SystemVerilog $clog2 semantics."""
@@ -184,7 +176,7 @@ def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir,
         shape=shape,
         name=tmp_name,
         comb_depth=pipeline_every,
-        accumulate=False,          # Pure adder , no fused accumulation
+        accumulate=False,          # Pure adder, no fused accumulation
         accumulator_width=None,    # Not applicable without accumulation
         gates=[],                  # No gate absorption, inputs are complete values
         constants=[],              # No Baugh-Wooley correction, unsigned inputs
@@ -193,7 +185,7 @@ def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir,
         enable=False,              # No accumulator registers to initialize
     )
 
-    # Derive final name with delay suffix 
+    # Derive final name with delay suffix
     if name is not None:
         final_name = name
         final_path = tmp_path
@@ -252,19 +244,18 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
     # Check eligibility (same logic as _is_add_multi_comp_eligible)
     if version == 2 or simd < 4:
         # Ineligible: just copy template as-is
-        import shutil
         shutil.copy(os.path.join(rtllib_dir, "add_multi.sv"), patched_path)
         return {"comp_names": [], "files": [patched_path]}
 
     # Eligible: generate compressors and patch add_multi.sv
     target = resolve_target(fpgapart)
 
-    #This is currently a parallel implementation of the lo_width computation in mvu.sv's sliceLanes() function.
-    #The resulting lo_width values determine the compressor input Shapes, so we need to compute them here in Python at generation time.
-    #Must be kept in SYNC.
+    # This is currently a parallel implementation of the lo_width computation in mvu.sv's sliceLanes() function.
+    # The resulting lo_width values determine the compressor input Shapes, so we need to compute them here in Python at generation time.
+    # Must be kept in SYNC.
     widths = lo_widths_from_mvu_params(version, ww, aw, accu_width, narrow_weights)
 
-    #Generate one compressor per unique (SIMD, lo_width)
+    # Generate one compressor per unique (SIMD, lo_width)
     generated = {}  # (simd, width) -> (name, delay)
     for w in widths:
         key = (simd, w)

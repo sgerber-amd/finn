@@ -176,14 +176,8 @@ class VerilogGenerator(Visitor):
         if (w.has_source and isinstance(w.source, Connectable) and
             not isinstance(w.source, BlackboxPort) and
             not isinstance(w.source, BlackboxVecElement)):
-            # Handle Constant sources specially - use the value directly
-            from ..graph.nodes import Constant
-            if isinstance(w.source, Constant):
-                self.emitter.emitln(
-                    f"assign {self.get_name(w)} = {w.source.value};")
-            else:
-                self.emitter.emitln(
-                    f"assign {self.get_name(w)} = {self.get_name(w.source)};")
+            self.emitter.emitln(
+                f"assign {self.get_name(w)} = {self.get_name(w.source)};")
         self._emitted_hardware.add(w)
 
     def visit_logic(self, lgc: Logic):
@@ -244,13 +238,6 @@ class VerilogGenerator(Visitor):
             emit_with_rst_and_en()
         self.emitter.emitln("end")
         self._emitted_hardware.add(lgc)
-
-    def visit_constant(self, c):
-        """Emit a constant value (used for Baugh-Wooley correction constants)"""
-        if c in self._emitted_hardware:
-            return
-        # Constants are emitted inline where they're used, no declaration needed
-        self._emitted_hardware.add(c)
 
     def visit_blackbox(self, b: Blackbox):
         if b.annotations:
