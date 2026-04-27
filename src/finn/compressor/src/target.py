@@ -41,8 +41,8 @@ def resolve_target(fpgapart):
     versal_prefixes_5 = ("xqrvc", "xcv80")
     if fpgapart[0:4] in versal_prefixes_4 or fpgapart[0:5] in versal_prefixes_5:
         return Versal()
-    # UltraScale/UltraScale+ prefixes: Kintex US (xcku), Virtex US (xcvu),
-    # Zynq US (xczu), defense (xqzu)
+    # UltraScale/UltraScale+ prefixes:
+    # Kintex US (xcku), Virtex US (xcvu), Zynq US (xczu), defense (xqzu)
     ultrascale_prefixes = ("xcku", "xcvu", "xczu", "xqzu")
     if fpgapart[0:4] in ultrascale_prefixes:
         return UltraScale()

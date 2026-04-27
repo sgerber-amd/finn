@@ -55,11 +55,7 @@ def _determine_impl_style(node, fpgapart, model):
             return _dwc_determine_impl_style(node)
         if rtl_variant:
             if optype == "MVAU":
-                idt = node_inst.get_input_datatype(0)
-                wdt = node_inst.get_input_datatype(1)
-                inp_width_fit = idt.bitwidth() >= 4
-                weight_width_fit = wdt.bitwidth() >= 4
-                if inp_width_fit and weight_width_fit and _mvu_rtl_possible(node, fpgapart, model):
+                if _mvu_rtl_possible(node, fpgapart, model):
                     return "rtl"
                 else:
                     return "hls"

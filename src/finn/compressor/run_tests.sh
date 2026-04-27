@@ -81,6 +81,7 @@ function run_test {
 
 # Phase 1: Sequential generation
 LABELS=()
+mkdir -p "$SCRIPT_DIR/gen"
 echo -e "Generating configs:\n"
 for test in "${TESTS[@]}"; do
 	echo "  $test ..."

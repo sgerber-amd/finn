@@ -18,6 +18,7 @@ See the [MVAU compressor integration flow diagram](mvau_compressor_inegration_fl
 
 **Key integration files:**
 - `src/finn/transformation/fpgadataflow/specialize_layers.py` - RTL vs HLS selection logic
+- `src/finn/custom_op/fpgadataflow/rtl/matrixvectoractivation_rtl.py` - FINN-side RTL MVAU integration with compressor path selection
 - `src/finn/compressor/src/dotp_finn.py` - FINN wrapper for dot-product compressor generation
 - `src/finn/compressor/src/add_multi_finn.py` - FINN wrapper for multi-operand adder generation
 - `finn-rtllib/mvu/mvu_vvu_axi.sv` - RTL template that instantiates generated compressors
