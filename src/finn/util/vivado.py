@@ -31,18 +31,19 @@ import subprocess
 
 from finn.util.basic import launch_process_helper, which
 
-"""
 
 def _parse_utilization_report_fallback(vivado_proj_folder, clk_period_ns):
-    """
-# Parse Vivado utilization report directly when res.txt is missing or malformed.
+    """Parse Vivado utilization report directly when res.txt is missing or malformed.
 
-#   This fallback handles cases where Oh-My-Xilinx crashes before writing res.txt
-#  (e.g., TCL piping syntax errors in vivadocompile.tcl).
-"""
+    This fallback handles cases where Oh-My-Xilinx crashes before writing res.txt
+    (e.g., TCL piping syntax errors in vivadocompile.tcl).
+    """
     import re
 
-    utilization_rpt = vivado_proj_folder + "/vivadocompile/vivadocompile.runs/synth_1/finn_design_wrapper_utilization_synth.rpt"
+    utilization_rpt = (
+        vivado_proj_folder
+        + "/vivadocompile/vivadocompile.runs/synth_1/finn_design_wrapper_utilization_synth.rpt"
+    )
 
     ret = {"vivado_proj_folder": vivado_proj_folder}
 
@@ -51,64 +52,76 @@ def _parse_utilization_report_fallback(vivado_proj_folder, clk_period_ns):
             urpt_data = urpt.read()
 
             # Parse LUT count: | Slice LUTs    |  236 |
-            match = re.search(r'\|\s*Slice LUTs\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*Slice LUTs\s*\|\s*(\d+)\s*\|", urpt_data)
             ret["LUT"] = float(match.group(1)) if match else 0
 
             # Parse LUTRAM count: | LUT as Memory |   82 |
-            match = re.search(r'\|\s*LUT as Memory\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*LUT as Memory\s*\|\s*(\d+)\s*\|", urpt_data)
             ret["LUTRAM"] = float(match.group(1)) if match else 0
 
             # Parse FF count: | FDRE          | 391 |  or total FF line
-            match = re.search(r'\|\s*Register as Flip Flop\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*Register as Flip Flop\s*\|\s*(\d+)\s*\|", urpt_data)
             if not match:
                 # Fallback: sum FDRE, FDSE, FDCE, FDPE
-                ff_matches = re.findall(r'\|\s*FD[RSCP]E\s*\|\s*(\d+)\s*\|', urpt_data)
+                ff_matches = re.findall(r"\|\s*FD[RSCP]E\s*\|\s*(\d+)\s*\|", urpt_data)
                 ret["FF"] = float(sum(int(x) for x in ff_matches)) if ff_matches else 0
             else:
                 ret["FF"] = float(match.group(1))
 
             # Parse DSP count: | DSPs      |    4 |  or  | DSP48E2 only |    4 |
-            match = re.search(r'\|\s*DSPs\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*DSPs\s*\|\s*(\d+)\s*\|", urpt_data)
             if match:
                 ret["DSP"] = float(match.group(1))
             else:
                 # Try specific DSP types (DSP48E1, DSP48E2, DSP58)
-                dsp_matches = re.findall(r'\|\s*DSP\d+[^\|]*only\s*\|\s*(\d+)\s*\|', urpt_data)
+                dsp_matches = re.findall(r"\|\s*DSP\d+[^\|]*only\s*\|\s*(\d+)\s*\|", urpt_data)
                 ret["DSP"] = float(sum(int(x) for x in dsp_matches)) if dsp_matches else 0
 
             # Parse BRAM counts
-            match = re.search(r'\|\s*RAMB18\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*RAMB18\s*\|\s*(\d+)\s*\|", urpt_data)
             ret["BRAM_18K"] = float(match.group(1)) if match else 0
 
-            match = re.search(r'\|\s*RAMB36\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*RAMB36\s*\|\s*(\d+)\s*\|", urpt_data)
             ret["BRAM_36K"] = float(match.group(1)) if match else 0
 
             ret["BRAM"] = ret["BRAM_18K"] / 2 + ret["BRAM_36K"]
 
             # Parse URAM count
-            match = re.search(r'\|\s*URAM\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*URAM\s*\|\s*(\d+)\s*\|", urpt_data)
             ret["URAM"] = float(match.group(1)) if match else 0
 
             # Parse CARRY count
-            match = re.search(r'\|\s*CARRY\d+\s*\|\s*(\d+)\s*\|', urpt_data)
+            match = re.search(r"\|\s*CARRY\d+\s*\|\s*(\d+)\s*\|", urpt_data)
             ret["Carry"] = float(match.group(1)) if match else 0
 
     except FileNotFoundError:
         # Utilization report doesn't exist - synthesis failed completely
-        ret.update({
-            "LUT": 0, "LUTRAM": 0, "FF": 0, "DSP": 0,
-            "BRAM": 0, "BRAM_18K": 0, "BRAM_36K": 0,
-            "URAM": 0, "Carry": 0
-        })
+        ret.update(
+            {
+                "LUT": 0,
+                "LUTRAM": 0,
+                "FF": 0,
+                "DSP": 0,
+                "BRAM": 0,
+                "BRAM_18K": 0,
+                "BRAM_36K": 0,
+                "URAM": 0,
+                "Carry": 0,
+            }
+        )
 
     # Try to get timing from timing report
-    timing_rpt = vivado_proj_folder + "/vivadocompile/vivadocompile.runs/impl_1/finn_design_wrapper_timing_summary_routed.rpt"
+    timing_rpt = (
+        vivado_proj_folder + "/vivadocompile/vivadocompile.runs/impl_1/"
+        "finn_design_wrapper_timing_summary_routed.rpt"
+    )
     try:
         with open(timing_rpt, "r") as trpt:
             trpt_data = trpt.read()
-            # Parse WNS: | WNS(ns)      | TNS(ns)  | TNS Failing Endpoints | TNS Total Endpoints |
+            # Parse WNS: | WNS(ns)      | TNS(ns)  |
+            # TNS Failing Endpoints | TNS Total Endpoints |
             #            | 3.996        | 0.000    |
-            match = re.search(r'WNS\(ns\)[^\n]*\n[^\d]*([-\d.]+)', trpt_data)
+            match = re.search(r"WNS\(ns\)[^\n]*\n[^\d]*([-\d.]+)", trpt_data)
             ret["WNS"] = float(match.group(1)) if match else 0
             ret["Delay"] = ret["WNS"]
     except FileNotFoundError:
@@ -117,7 +130,6 @@ def _parse_utilization_report_fallback(vivado_proj_folder, clk_period_ns):
 
     ret["fmax_mhz"] = 1000.0 / clk_period_ns
     return ret
-"""
 
 
 def out_of_context_synth(
@@ -177,8 +189,8 @@ def out_of_context_synth(
                 import re
 
                 utilization_rpt = (
-                    vivado_proj_folder
-                    + "/vivadocompile/vivadocompile.runs/synth_1/finn_design_wrapper_utilization_synth.rpt"
+                    vivado_proj_folder + "/vivadocompile/vivadocompile.runs/"
+                    "synth_1/finn_design_wrapper_utilization_synth.rpt"
                 )
                 try:
                     with open(utilization_rpt, "r") as urpt:
@@ -278,14 +290,17 @@ puts "INFO: Resuming timing search from existing synthesis"
 puts "INFO: Clock name: $clk_name"
 puts "INFO: Initial bounds: \\[$tm ns : $ts ns\\]"
 
-# Open synthesized design -> original synth already ran using ooc synth, which is generated as part of the finn flow. This means we just open thisdesign for timing closure search.
+# Open synthesized design -> original synth already ran using ooc synth,
+# which is generated as part of the finn flow. This means we just open this
+# design for timing closure search.
 open_run synth_1
 
 # Remove the original clock constraint file from OOC synth
 # It contains "create_clock -period 10.000 [get_nets ap_clk]" which conflicts
 # with our dynamic timing search
 set constr_set [current_fileset -constrset]
-set orig_xdc [get_files -of_objects $constr_set *.xdc -filter {{NAME =~ "*finn_design_wrapper.xdc"}}]
+set orig_xdc [get_files -of_objects $constr_set *.xdc \\
+    -filter {{NAME =~ "*finn_design_wrapper.xdc"}}]
 if {{$orig_xdc ne ""}} {{
     puts "INFO: Removing original constraint file: $orig_xdc"
     remove_files -fileset $constr_set $orig_xdc
@@ -362,7 +377,7 @@ while {{[expr $ts - $tm] > 0.1}} {{
     save_intermediate_result $best_passing_period $best_passing_wns $iteration
 
     # Next attempt by splitting the interval [$tm:$ts] on the aggressive side
-	# somewhere between 20% and 50% using $tt-$wns as guidance.
+    # somewhere between 20% and 50% using $tt-$wns as guidance.
     set tt [expr {{max((4*$tm+$ts)/5.0, min($tt-$wns, ($tm+$ts)/2.0))}}]
 }}
 
@@ -442,6 +457,6 @@ exit
             f"fmax={ret.get('achieved_fmax_mhz'):.1f} MHz, "
             f"iterations={int(ret.get('iterations', 0))} (incomplete)"
         )
-        print(f"         This is the BEST PASSING result before timeout/hang")
+        print("         This is the BEST PASSING result before timeout/hang")
 
     return ret

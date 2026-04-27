@@ -35,7 +35,6 @@ from shutil import copy2
 # Import helper from synth_ooc.py
 from finn.transformation.fpgadataflow.synth_ooc import generate_unified_add_multi
 from finn.util.basic import get_dsp_block, make_build_dir
-from finn.util.vivado import out_of_context_synth
 
 
 class SynthOutOfContextMVAUOnly(Transformation):
@@ -187,9 +186,9 @@ class SynthOutOfContextMVAUOnly(Transformation):
             # Generate generics TCL file (same pattern as synth_ooc.py line 120-125)
             generics_tcl_path = os.path.join(build_dir, "mvau_generics.tcl")
             with open(generics_tcl_path, "w") as f:
-                f.write(f"# Set MVAU generics on top module\n")
-                f.write(f"set_property generic {{\\\n")
-                f.write(f"    IS_MVU=1 \\\n")
+                f.write("# Set MVAU generics on top module\n")
+                f.write("set_property generic {\\\n")
+                f.write("    IS_MVU=1 \\\n")
                 f.write(f"    VERSION={version} \\\n")
                 f.write(f"    MW={mw} \\\n")
                 f.write(f"    MH={mh} \\\n")
@@ -201,7 +200,7 @@ class SynthOutOfContextMVAUOnly(Transformation):
                 f.write(f"    SIGNED_ACTIVATIONS={signed_act} \\\n")
                 f.write(f"    USE_COMPRESSOR={use_compressor} \\\n")
                 f.write(f"    COMP_PIPELINE_DEPTH={comp_depth} \\\n")
-                f.write(f"}} [get_filesets sources_1]\n")
+                f.write("} [get_filesets sources_1]\n")
             float_ip_tcl.append(generics_tcl_path)
 
         # WORKAROUND: Oh-My-Xilinx vivadoprojgen.sh has a bug where it creates dummy

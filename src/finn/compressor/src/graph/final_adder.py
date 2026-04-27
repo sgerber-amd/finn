@@ -123,7 +123,7 @@ class QuaternaryAdder(FinalAdder):
         super().__init__(input_shape, output_shape)
 
     def build_hardware(self):
-        ## Find the limit up to which the quaternary adder is needed.
+        # Find the limit up to which the quaternary adder is needed.
         # We construct a two-input adder after this.
         height_4_until = len(self.input_wires)
         tail_length = 0
@@ -309,11 +309,11 @@ class MuxCYTernaryAdder(FinalAdder):
         os = [el for c4 in c4s for el in c4.O.elements]
         cos = [el for c4 in c4s for el in c4.CO.elements]
 
-        ## Connect CARRY4 together
+        # Connect CARRY4 together
         for c4p, c4n in zip(c4s, c4s[1:]):
             c4p.CO.elements[-1].connect_to(c4n.CI)
 
-        ## Connect inputs
+        # Connect inputs
         # Only connect up to the number of available input columns
         for idx, lut in enumerate(luts[: len(self.input_wires)]):
             try_connect(lambda idx=idx, lut=lut: self.input_wires[idx][0].connect_to(lut.I0))
@@ -323,12 +323,12 @@ class MuxCYTernaryAdder(FinalAdder):
         try_connect(lambda: self.input_wires[0][3].connect_to(dis[0]))
         try_connect(lambda: self.input_wires[0][4].connect_to(cis[0]))
 
-        ## Second carry connection
+        # Second carry connection
         for p, n, n_di in zip(luts, luts[1:], dis[1:]):
             p.O5.connect_to(n.I3)
             p.O5.connect_to(n_di)
 
-        ## Connect outputs
+        # Connect outputs
         for lut, s in zip(luts, ss):
             lut.O6.connect_to(s)
 

@@ -270,7 +270,8 @@ def main():
         template_path = os.path.abspath(args.dotp_template)
         if not os.path.isfile(template_path):
             raise FileNotFoundError(
-                f"dotp template not found: {template_path}. Use --dotp-template or --skip-dotp-template."
+                f"dotp template not found: {template_path}. "
+                f"Use --dotp-template or --skip-dotp-template."
             )
         dotp_path = os.path.join(args.output_dir, args.dotp_output_name)
         expand_template(

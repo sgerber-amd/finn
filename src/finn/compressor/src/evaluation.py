@@ -101,9 +101,13 @@ def evaluation():
     tclfiles = [emit_eval_tcl_script(el) for el in filenames]
 
     def call_vivado(filename):
+        vivado_path = (
+            "/proj/xbuilds/released/2023.1/2023.1_0508_1/"
+            "installs/lin64/Vivado/2023.1/settings64.sh"
+        )
         command = f"""cd ../gen/ &&
             ls &&
-            source /proj/xbuilds/released/2023.1/2023.1_0508_1/installs/lin64/Vivado/2023.1/settings64.sh &&
+            source {vivado_path} &&
             vivado -mode batch -source {filename.split("/")[-1]}"""
         return subprocess.run(
             command, shell=True, check=True, timeout=3600, text=True, executable="/bin/bash"
@@ -176,7 +180,7 @@ foreach comp $comps {
     set filename $filename_prefix$comp$filename_suffix
     puts $filename
     set outfile [open $filename w]
-    puts $outfile "\{"
+    puts $outfile "\\{"
 
     set tm 0.7 ; # Minimum possible ime
     set tt 10.0 ; # Time to Test
@@ -201,15 +205,19 @@ foreach comp $comps {
         route_design -directive Explore
         report_drc
         report_utilization -hierarchical
-        report_timing -setup -hold -max_paths 3 -nworst 3 -input_pins -sort_by group -file $comp.twrA
-        report_timing_summary -delay_type min_max -path_type full_clock_expanded -report_unconstrained -check_timing_verbose -max_paths 3 -nworst 3 -significant_digits 3 -input_pins -file $comp.twrA
+        report_timing -setup -hold -max_paths 3 -nworst 3 -input_pins \\
+            -sort_by group -file $comp.twrA
+        report_timing_summary -delay_type min_max \\
+            -path_type full_clock_expanded -report_unconstrained \\
+            -check_timing_verbose -max_paths 3 -nworst 3 \\
+            -significant_digits 3 -input_pins -file $comp.twrA
 
         # -----------------------------------------------------------------------------
         # Find maximum data path delay and slack
         set f [open $comp.twrA r]
         set file_data [read $f]
         close $f
-        if {[regexp { +Data Path Delay: +(\d+\.\d+)} $file_data -> value]} {
+        if {[regexp { +Data Path Delay: +(\\d+\\.\\d+)} $file_data -> value]} {
             set tr $value
         } {
             error "DATA PATH DELAY NOT FOUND"
@@ -220,13 +228,13 @@ foreach comp $comps {
         set f [open util_$comp.twrA r]
         set file_data [read $f]
         close $f
-        if {[regexp {CLB LUTs +\| +(\d+)} $file_data -> value]} {
+        if {[regexp {CLB LUTs +\\| +(\\d+)} $file_data -> value]} {
             set lc $value
         } {
             error "LUT UTILIZATION NOT FOUND"
         }
 
-        if {[regexp {SLICE +\| +(\d+)} $file_data -> value]} {
+        if {[regexp {SLICE +\\| +(\\d+)} $file_data -> value]} {
             set sc $value
         } {
             error "SLICE UTILIZATION NOT FOUND"
@@ -250,7 +258,7 @@ foreach comp $comps {
     puts -nonewline $outfile "\\"Slice\\": $sc,"
     puts -nonewline $outfile "\\"LUTS\\": $lc" ;
 
-    puts $outfile "\}"
+    puts $outfile "\\}"
     close $outfile
     remove_files {$comp}
 }

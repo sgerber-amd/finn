@@ -328,16 +328,19 @@ def run_comparison(
                         latency_ns = exp_cycles * achieved_period
                         results[variant]["latency_ns"] = latency_ns
                         print(
-                            f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                            f"      Achieved fmax: {achieved_fmax:.1f} MHz "
+                            f"in {timing_result['iterations']} iterations"
                         )
                         print(f"      Latency: {exp_cycles} cycles = {latency_ns:.2f} ns")
                     else:
                         print(
-                            f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                            f"      Achieved fmax: {achieved_fmax:.1f} MHz "
+                            f"in {timing_result['iterations']} iterations"
                         )
                 else:
                     print(
-                        f"      WARNING: vivado_proj_folder not found or doesn't exist: {vivado_proj_folder}"
+                        f"      WARNING: vivado_proj_folder not found or "
+                        f"doesn't exist: {vivado_proj_folder}"
                     )
 
         except Exception as e:
@@ -360,8 +363,10 @@ def format_table(all_results):
         lines = [
             "## HLS vs RTL+Compressor Comparison (with Timing Search)",
             "",
-            "| Config | LUT (HLS) | LUT (RTL) | DSP (HLS) | DSP (RTL) | fmax (HLS) MHz | fmax (RTL) MHz | LUT Δ | DSP Δ |",
-            "|--------|-----------|-----------|-----------|-----------|----------------|----------------|-------|-------|",
+            "| Config | LUT (HLS) | LUT (RTL) | DSP (HLS) | DSP (RTL) | "
+            "fmax (HLS) MHz | fmax (RTL) MHz | LUT Δ | DSP Δ |",
+            "|--------|-----------|-----------|-----------|-----------|"
+            "----------------|----------------|-------|-------|",
         ]
     else:
         lines = [
@@ -567,9 +572,12 @@ def main():
     print(f"Part: {fpga_part}")
     print(f"Target clock: {args.synth_clk_period_ns} ns ({1000/args.synth_clk_period_ns:.1f} MHz)")
     print(f"Mode: {'Synthesis only (fast)' if args.synth_only else 'Full bitfile (slow)'}")
-    print(
-        f"Synthesis target: {'MVAU core only (no wrappers)' if args.mvau_only else 'Full stitched design (with wrappers/FIFOs)'}"
+    synth_target = (
+        "MVAU core only (no wrappers)"
+        if args.mvau_only
+        else "Full stitched design (with wrappers/FIFOs)"
     )
+    print(f"Synthesis target: {synth_target}")
     print(f"Timing search: {'Enabled' if args.timing_search else 'Disabled'}")
     print(f"Configs: {len(configs)}")
     print(f"Work: {work_dir}\n")
@@ -603,7 +611,7 @@ def main():
 
     print("\n" + "=" * 80)
     print(format_table(all_results))
-    print(f"\nFinal results saved to:")
+    print("\nFinal results saved to:")
     print(f"  JSON: {json_path}")
     print(f"  CSV: {csv_path}")
 

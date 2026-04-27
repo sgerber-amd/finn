@@ -39,10 +39,9 @@ Outputs:
 import argparse
 import math
 import os
-import shutil
 
 from .main import generate_compressor
-from .target import SevenSeries, Versal, resolve_target, resolve_target_name
+from .target import resolve_target, resolve_target_name
 from .utils.shape import Shape
 
 # ---------------------------------------------------------------------------
@@ -248,8 +247,10 @@ def generate_add_multi_comps(
     # Always generate compressors and patch add_multi.sv
     target = resolve_target(fpgapart)
 
-    # This is currently a parallel implementation of the lo_width computation in mvu.sv's sliceLanes() function.
-    # The resulting lo_width values determine the compressor input Shapes, so we need to compute them here in Python at generation time.
+    # This is currently a parallel implementation of the lo_width
+    # computation in mvu.sv's sliceLanes() function. The resulting
+    # lo_width values determine the compressor input Shapes, so we need
+    # to compute them here in Python at generation time.
     # Must be kept in SYNC.
     widths = lo_widths_from_mvu_params(version, ww, aw, accu_width, narrow_weights)
 

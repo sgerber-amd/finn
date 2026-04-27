@@ -9,10 +9,9 @@
 import os
 import re
 import sys
-from typing import List, Optional
 
 from .main import generate_compressor
-from .target import SevenSeries, Target, Versal
+from .target import SevenSeries, Versal
 from .utils.mul_comp_map import MulCompMap
 from .utils.shape import Shape
 
@@ -37,7 +36,9 @@ if __name__ == "__main__":
         target = Versal()
         fpga_part = "xcvc1902-vsva2197-2MP-e-S"
 
-    clog2 = lambda x: (x - 1).bit_length()
+    def clog2(x):
+        return (x - 1).bit_length()
+
     np = (
         clog2(n) + (na if nb == 1 and not sb else na + nb)
         if na > 1
@@ -88,9 +89,9 @@ if __name__ == "__main__":
         dst = os.path.join(gen_dir, dst_rel)
         with open(src, "rt") as fsrc:
             with open(dst, "wt") as fdst:
-                for l in fsrc:
+                for line in fsrc:
                     fdst.write(
-                        l.replace("{n}", str(n))
+                        line.replace("{n}", str(n))
                         .replace("{na}", str(na))
                         .replace("{nb}", str(nb))
                         .replace("{sa}", "s" if sa else "u")

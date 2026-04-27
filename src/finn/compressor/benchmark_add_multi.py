@@ -222,12 +222,14 @@ def run_comparison(
                                 latency_ns = exp_cycles * achieved_period
                                 results[variant]["latency_ns"] = latency_ns
                                 print(
-                                    f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                                    f"      Achieved fmax: {achieved_fmax:.1f} MHz "
+                                    f"in {timing_result['iterations']} iterations"
                                 )
                                 print(f"      Latency: {exp_cycles} cycles = {latency_ns:.2f} ns")
                             else:
                                 print(
-                                    f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                                    f"      Achieved fmax: {achieved_fmax:.1f} MHz "
+                                    f"in {timing_result['iterations']} iterations"
                                 )
                         else:
                             print(
@@ -260,15 +262,19 @@ def format_table(all_results):
         lines = [
             "## RTL Binary Adder vs RTL Compressor Adder (with Timing Search)",
             "",
-            "| Config | LUT (Binary) | LUT (Compressor) | DSP (Binary) | DSP (Compressor) | fmax (Binary) MHz | fmax (Compressor) MHz | LUT Δ | fmax Δ % |",
-            "|--------|--------------|------------------|--------------|------------------|-------------------|-----------------------|-------|----------|",
+            "| Config | LUT (Binary) | LUT (Compressor) | DSP (Binary) | "
+            "DSP (Compressor) | fmax (Binary) MHz | fmax (Compressor) MHz | LUT Δ | fmax Δ % |",
+            "|--------|--------------|------------------|--------------|"
+            "------------------|-------------------|-----------------------|-------|----------|",
         ]
     else:
         lines = [
             "## RTL Binary Adder vs RTL Compressor Adder (add_multi optimization)",
             "",
-            "| Config | LUT (Binary) | LUT (Compressor) | DSP (Binary) | DSP (Compressor) | fmax (Binary) MHz | fmax (Compressor) MHz | LUT Δ | fmax Δ % |",
-            "|--------|--------------|------------------|--------------|------------------|-------------------|-----------------------|-------|----------|",
+            "| Config | LUT (Binary) | LUT (Compressor) | DSP (Binary) | "
+            "DSP (Compressor) | fmax (Binary) MHz | fmax (Compressor) MHz | LUT Δ | fmax Δ % |",
+            "|--------|--------------|------------------|--------------|"
+            "------------------|-------------------|-----------------------|-------|----------|",
         ]
 
     for label, results in all_results:
@@ -320,7 +326,8 @@ if __name__ == "__main__":
 
     # Test configurations - 8-bit operands on 7-Series/UltraScale+, 10-bit on Versal
     # 7-Series/UltraScale+: W8/A8 uses standard mvu.sv with add_multi (no genINT8)
-    # Versal: W10/A10 bypasses genINT8 (which requires W<=8 AND A<=9), forces genSoftVec with add_multi
+    # Versal: W10/A10 bypasses genINT8 (which requires W<=8 AND A<=9),
+    # forces genSoftVec with add_multi
     # add_multi compressors only activate when SIMD >= 4
 
     # Determine bit-widths based on board

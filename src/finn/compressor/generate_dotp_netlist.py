@@ -21,14 +21,14 @@ import os
 import shutil
 import sys
 
+from finn.compressor.src.dotp_finn import generate_dotp_comp
+from finn.compressor.src.target import resolve_target
+
 # Add src/ to path for imports when running outside installed environment
 script_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(script_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-
-from finn.compressor.src.dotp_finn import generate_dotp_comp
-from finn.compressor.src.target import resolve_target
 
 
 def compute_accu_width(vector_length, simd, ww, aw, signed_act):
