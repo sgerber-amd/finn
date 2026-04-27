@@ -1,11 +1,15 @@
 /******************************************************************************
- * Copyright (C) 2026, Advanced Micro Devices, Inc.
- * All rights reserved.
+ * Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
- * @brief	Standalone testbench for add_multi compressor (comp_NuW_dD).
- *		Tests the compressor directly without requiring add_multi.sv.
+ * @brief	Testbench template for add_multi compressor cores
+ * @author	Simon Gerber <simon.gerber@amd.com>
+ *****************************************************************************/
+
+/**
+ * Standalone testbench for add_multi compressor (comp_NuW_dD).
+ * Tests the compressor directly without requiring add_multi.sv.
  *
  * Template placeholders expanded by run_add_multi_comp_tests.sh:
  *   {n}           - Number of addends

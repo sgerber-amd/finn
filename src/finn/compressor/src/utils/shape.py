@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Shape representation for compressor bit matrices
+#############################################################################
+
 from typing import Tuple
 from itertools import zip_longest
 

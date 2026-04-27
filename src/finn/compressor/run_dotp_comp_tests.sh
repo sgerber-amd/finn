@@ -1,5 +1,13 @@
 #!/bin/bash
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
 #
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Test runner for dot product compressor verification
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 # Run dotp_comp integration tests for multiple configurations.
 # Uses dotp_finn.py to generate the compressor core (comp.sv),
 # then instantiates it from the static dotp_comp template via XSim.
@@ -61,6 +69,9 @@ function parse_config {
 	if [[ "$TARGET" == "7series" ]]; then
 		CFG_PART="xc7z020clg400-1"  # Pynq-Z1
 		CFG_TARGET_FLAG="--target 7-Series"
+	elif [[ "$TARGET" == "ultrascale" ]]; then
+		CFG_PART="xczu9eg-ffvb1156-2-e"  # ZCU102
+		CFG_TARGET_FLAG="--target UltraScale"
 	else
 		CFG_PART="xcvc1902-vsva2197-2MP-e-S"  # Versal VCK190
 		CFG_TARGET_FLAG=""

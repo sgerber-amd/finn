@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Test vector generation for compressor verification
+#############################################################################
+
 from ..utils.shape import Shape
 from itertools import accumulate
 from typing import List

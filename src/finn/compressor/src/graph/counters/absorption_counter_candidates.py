@@ -1,3 +1,12 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    7-Series and Versal gate absorption counter implementations
+# @author    Co-authored by Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 from abc import ABC, abstractmethod
 from ...utils.shape import Shape
 from ..nodes import GateAbsorptionCounter
@@ -98,7 +107,7 @@ class MuxCYPredAdder(GateAbsorptionCounter):
         for i in range(len(self.gates)):
             p1 = self.gates[i][0]
             p2 = self.gates[i][1]
-            # LUT6_2: predO5→O5, predO6→O6 (no swap, unlike the misleading comments elsewhere)
+            # LUT6_2: predO5→O5, predO6→O6 
             # Match VersalPredAdder pattern: sum first, carry second
             lut = LUT6_2.fromPred(
                 lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: fa_sum(p1(A0,A1), p2(A2,A3), A4),    # predO5 → O5 (sum)
@@ -242,8 +251,8 @@ class MuxCYRippleSum(GateAbsorptionCounter):
             # Gates use I0/I1 (p1) and I2/I3 (p2), carry-in on I4
             # Try swapping: O5 = sum, O6 = carry (opposite of naming)
             lut = LUT6_2.fromPred(
-                lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: fa_sum(p1(A0,A1), p2(A2,A3), A4),    # O5 = sum (SWAPPED!)
-                lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: fa_carry(p1(A0,A1), p2(A2,A3), A4),  # O6 = carry (SWAPPED!)
+                lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: fa_sum(p1(A0,A1), p2(A2,A3), A4),    # O5 = sum 
+                lambda A0,A1,A2,A3,A4,A5,p1=p1,p2=p2: fa_carry(p1(A0,A1), p2(A2,A3), A4),  # O6 = carry 
             )
             luts.append(lut)
 

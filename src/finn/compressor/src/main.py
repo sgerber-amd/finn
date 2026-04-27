@@ -1,6 +1,14 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Main compressor tree generation entry point
+#############################################################################
+
 import time
 import argparse
-from .target import Target, Versal, SevenSeries
+from .target import Target, Versal, SevenSeries, UltraScale
 from .utils.shape import Shape
 from .passes.compressor_constructor import CompressorConstructor
 from .passes.cost_estimator import CostEstimator
@@ -68,8 +76,10 @@ def parse_cli():
             exit(-1)
     if args.target == "Versal":
         target = Versal()
-    elif args.target == "7-Series": 
+    elif args.target == "7-Series":
         target = SevenSeries()
+    elif args.target == "UltraScale":
+        target = UltraScale()
     else:
         raise ValueError("Target not currently supported.")
 

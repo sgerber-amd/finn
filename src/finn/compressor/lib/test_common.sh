@@ -1,4 +1,13 @@
 #!/bin/bash
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Common shell utilities for compressor testing
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 # Common test utilities for compressor integration tests.
 # Source this file from test scripts.
 

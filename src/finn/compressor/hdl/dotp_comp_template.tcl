@@ -1,3 +1,12 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Vivado simulation script for dot product compressor with accumulation
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 # Create Fresh Project
 set label {label}
 set src_dir {src_dir}

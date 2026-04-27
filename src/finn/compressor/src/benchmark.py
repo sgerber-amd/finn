@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Benchmarking harness for compressor generation
+#############################################################################
+
 from .passes.compressor_constructor import CompressorConstructor
 from .target import Versal
 from .passes.cost_estimator import CostEstimator

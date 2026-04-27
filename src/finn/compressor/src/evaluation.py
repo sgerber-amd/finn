@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Evaluation and benchmarking utilities for compressor
+#############################################################################
+
 from .target import Versal
 from .utils.shape import Shape
 from .main import generate_compressor

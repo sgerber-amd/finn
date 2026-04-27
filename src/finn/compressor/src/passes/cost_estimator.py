@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Cost estimation pass for compressor resources
+#############################################################################
+
 from ..graph.nodes import CompressionStage, Compressor, GateAbsorbedStage, PipelineStage
 from ..graph.nodes import Blackbox
 from ..graph.primitives import LUT6, LUT6_2, LUT6CY, LUT5, LUT2, LUT

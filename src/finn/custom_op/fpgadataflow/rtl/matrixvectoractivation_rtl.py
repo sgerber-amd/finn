@@ -318,30 +318,32 @@ class MVAU_rtl(MVAU, RTLBackend):
     def _is_dotp_comp_eligible(self, fpgapart, ww, aw, pumped_compute):
         """
         Check if LUT-based compressor should replace the DSP compute path.
-        Returns True when: non-pumped, small operands (WW <= 4 and AW <= 4),
-        and target is Versal or 7-Series (not UltraScale+).
+        Returns True when: non-pumped, small operands (WW <= 4 and AW <= 4).
+
+        All FPGA families are supported via resolve_target() in the compressor:
+        - Versal: LUT6 + LOOKAHEAD8 primitives
+        - UltraScale+: LUT6_2 + CARRY4 (Vivado maps to CARRY8)
+        - 7-Series: LUT6_2 + CARRY4
         """
-        # Check if compressors are force-disabled (for benchmarking)
-        if self.get_nodeattr("noCompressor"):
-            return False
         if pumped_compute or ww > 4 or aw > 4:
             return False
-        dsp_block = get_dsp_block(fpgapart)
-        # DSP48E2 (UltraScale+) excluded: no compressor target exists for its
-        # CARRY8 primitives — generator only supports Versal and 7-Series.
-        return dsp_block in ("DSP58", "DSP48E1")
-        
+        return True
+
 
     def _is_add_multi_comp_eligible(self, version, simd):
         """
         Check if add_multi lane reductions should use LUT compressors.
-        Returns True when: not UltraScale+ (version != 2) and SIMD >= 4
-        (below 4 inputs, compressors offer no benefit over binary adder tree).
+        Returns True when: not UltraScale+ (version != 2), SIMD >= 4,
+        and compressors are not force-disabled.
+
+        Below SIMD=4, compressors offer no benefit over binary adder tree.
+        UltraScale+ (version=2) excluded: no compressor support for CARRY8.
         """
         # Check if compressors are force-disabled (for benchmarking)
         if self.get_nodeattr("noCompressor"):
             return False
-        # version 2 = DSP48E2 (UltraScale+) blocked for same reason as above.
+        # version 2 = DSP48E2 (UltraScale+) not supported
+        # SIMD < 4: binary tree is more efficient
         return version != 2 and simd >= 4
 
     def generate_hdl(self, model, fpgapart, clk):
@@ -380,9 +382,10 @@ class MVAU_rtl(MVAU, RTLBackend):
             code_gen_dict["$USE_COMPRESSOR$"] = [str(1)]
             self.set_nodeattr("comp_module_name", result["comp_name"])
         else:
-            # Generate add_multi.sv (either patched with comps or template copy)
+            # DSP path: add_multi.sv handles lane reduction
             # Check if add_multi should use compressors (respects noCompressor attribute)
             if self._is_add_multi_comp_eligible(version, simd):
+                # Generate add_multi.sv with compressor optimization
                 result = generate_add_multi_comps(
                     fpgapart, version, simd, ww, aw, accu_width,
                     narrow_weights, code_gen_dir)
@@ -398,9 +401,10 @@ class MVAU_rtl(MVAU, RTLBackend):
             else:
                 # Compressors disabled: copy template add_multi.sv (binary adder tree)
                 rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
-                dest = os.path.join(code_gen_dir, "add_multi.sv")
-                shutil.copy(os.path.join(rtllib_dir, "add_multi.sv"), dest)
-                result = {"comp_names": [], "files": [dest]}
+                shutil.copy(
+                    os.path.join(rtllib_dir, "add_multi.sv"),
+                    os.path.join(code_gen_dir, "add_multi.sv")
+                )
 
         # add general parameters to dictionary
         code_gen_dict["$MODULE_NAME_AXI_WRAPPER$"] = [self.get_verilog_top_module_name()]

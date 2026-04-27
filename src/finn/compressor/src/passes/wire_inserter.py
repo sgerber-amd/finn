@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Wire insertion pass for compressor graph
+#############################################################################
+
 from .node_iterator import NodeIterator
 from ..graph.nodes import Blackbox, Counter, Wire, GateAbsorptionCounter
 

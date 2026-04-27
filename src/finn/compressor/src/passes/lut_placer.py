@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    RLOC placement annotation for compressor LUTs
+#############################################################################
+
 from .node_iterator import NodeIterator
 from ..graph.nodes import Compressor, Counter, GateAbsorptionCounter
 from ..graph.primitives import LUT6CY

@@ -1,3 +1,12 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    FINN wrapper for dot product compressor generation
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 """
 Generate a compressor core for FINN's dotp_comp module.
 
@@ -159,8 +168,15 @@ def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_di
     compressor_root = os.path.abspath(os.path.join(src_dir, ".."))
     dotp_comp_template = os.path.join(compressor_root, "hdl", "dotp_comp_template.sv")
     dotp_comp_path = os.path.join(output_dir, "dotp_comp.sv")
-    expand_template(dotp_comp_template, dotp_comp_path,
-                    {"$COMP_MODULE_NAME$": comp_name})
+    expand_template(dotp_comp_template, dotp_comp_path, {
+        "$COMP_MODULE_NAME$": comp_name,
+        "$EXPECTED_SIMD$": str(simd),
+        "$EXPECTED_NA$": str(na),
+        "$EXPECTED_NB$": str(nb),
+        "$EXPECTED_SIGNED_A$": str(1 if sa else 0),
+        "$EXPECTED_SIGNED_B$": str(1 if sb else 0),
+        "$EXPECTED_ACCU_WIDTH$": str(accu_width),
+    })
 
     return {
         "comp_name": comp_name,
@@ -185,7 +201,7 @@ def main():
     parser.add_argument('--signed_activations', action='store_true',
                         help="Activations are signed")
     parser.add_argument('-t', '--target', default="Versal",
-                        choices=["Versal", "7-Series"],
+                        choices=["Versal", "7-Series", "UltraScale"],
                         help="Target FPGA generation")
     parser.add_argument('-p', '--pipeline_every', type=int, default=None,
                         help="Pipeline registers every N combinational stages")
@@ -223,7 +239,15 @@ def main():
         expand_template(
             template_path,
             dotp_path,
-            {"$COMP_MODULE_NAME$": comp_name},
+            {
+                "$COMP_MODULE_NAME$": comp_name,
+                "$EXPECTED_SIMD$": str(args.simd),
+                "$EXPECTED_NA$": str(na),
+                "$EXPECTED_NB$": str(nb),
+                "$EXPECTED_SIGNED_A$": str(1 if sa else 0),
+                "$EXPECTED_SIGNED_B$": str(1 if sb else 0),
+                "$EXPECTED_ACCU_WIDTH$": str(args.accu_width),
+            },
         )
 
     sig = make_signature(n, sa, na, sb, nb)

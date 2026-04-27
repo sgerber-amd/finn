@@ -289,7 +289,7 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                         vivado_proj_folder=vivado_proj_folder,
                         top_name=top_name,
                         clk_name="ap_clk",
-                        clk_period_ns_min=2.0,  # Aggressive (500 MHz) - will likely fail
+                        clk_period_ns_min=1.0,  # Aggressive (1000 MHz) - will likely fail
                         clk_period_ns_max=20.0,  # Conservative (50 MHz) - should pass
                     )
 
@@ -463,13 +463,18 @@ def main():
     parser.add_argument(
         "--synth-clk-period-ns",
         type=float,
-        default=1.5,
-        help="Target clock period for synthesis in ns (default: 1.5 = 666 MHz)",
+        default=10.0,
+        help="Target clock period for synthesis in ns (default: 10.0 = 100 MHz)",
     )
     parser.add_argument(
         "--mvau-only",
         action="store_true",
         help="Synthesize bare MVAU core only (no wrappers/FIFOs) for pure resource measurement",
+    )
+    parser.add_argument(
+        "--single-config",
+        type=str,
+        help="Run single config (format: 'mw,mh,pe,simd,ww,aw'). Overrides configs list.",
     )
     args = parser.parse_args()
 
@@ -478,16 +483,34 @@ def main():
     fpga_part = board_cfg["part"]
 
     # 7-Series configs (MW, MH, PE, SIMD, WW, AW)
+    # NOTE: Configs 0-5 completed in previous runs
+    #       Config 5 (W8/A8) completed after genGeneric fallback fix (2026-04-17)
+    #       Configs 6-7 failed with NameError: signed_a undefined (fixed 2026-04-17)
     configs = [
-        (32, 18, 1, 1, 4, 4),    # Minimal parallelism (PE=1, SIMD=1)
-        (32, 18, 1, 16, 4, 4),   # SIMD only, 4-bit
-        (32, 18, 9, 1, 4, 4),    # PE only (PE=9, SIMD=1)
-        (32, 18, 9, 16, 2, 2),   # Balanced, 2-bit
-        (32, 18, 9, 16, 4, 4),   # Balanced, 4-bit
-        (32, 18, 9, 16, 8, 8),   # DSP-based reference (8-bit)
-        (32, 18, 9, 32, 4, 4),   # Balanced, SIMD-max, 4-bit
-        (32, 18, 18, 16, 4, 4),  # PE-max, 4-bit
+        # COMPLETED 2026-04-21 run_20260421_081013:
+        #(32, 18, 1, 1, 4, 4),    # COMPLETED - Minimal parallelism (PE=1, SIMD=1)
+        #(32, 18, 1, 16, 4, 4),   # COMPLETED - SIMD only, 4-bit
+        #(32, 18, 9, 1, 4, 4),    # COMPLETED - PE only (PE=9, SIMD=1)
+        #(32, 18, 9, 16, 2, 2),   # COMPLETED - Balanced, 2-bit
+        #(32, 18, 9, 16, 4, 4),   # COMPLETED - Balanced, 4-bit
+        #(32, 18, 9, 16, 8, 8),   # COMPLETED - DSP-based reference (8-bit)
+        #(32, 18, 9, 32, 4, 4),   # COMPLETED
+        #(32, 18, 18, 16, 4, 4),  # COMPLETED
+        #(32, 18, 1, 16, 2, 2),   # COMPLETED
+        #(32, 18, 1, 32, 2, 2),   # Crashed on add_multi.sv marker issue
+        #(32, 18, 9, 32, 2, 2),   # Never ran (script stopped after crash)
+        #(32, 18, 18, 16, 2, 2),  # Never ran (script stopped after crash)
+        (32, 18, 9, 1, 2, 2),    # COMPLETED - PE only (PE=9, SIMD=1)
+
     ]
+
+    # Override with single config if specified (for parallel execution)
+    if args.single_config:
+        parts = list(map(int, args.single_config.split(',')))
+        if len(parts) != 6:
+            raise ValueError(f"--single-config must have 6 values (mw,mh,pe,simd,ww,aw), got {len(parts)}")
+        configs = [tuple(parts)]
+        print(f"Running single config: {configs[0]}")
 
 
     # Default to FINN_BUILD_DIR/hls_vs_compressor_benchmark

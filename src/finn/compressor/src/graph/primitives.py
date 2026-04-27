@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    FPGA primitive definitions for compressor (LUTs, carry chains, etc.)
+#############################################################################
+
 from ctypes import c_uint64, c_uint32
 from .nodes import BlackboxInput, BlackboxOutput, Blackbox, LUT, Constant
 from .nodes import BlackboxInputVec, BlackboxOutputVec

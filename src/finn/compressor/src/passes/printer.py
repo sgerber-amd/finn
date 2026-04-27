@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Compressor tree printer for debugging
+#############################################################################
+
 from ..graph.nodes import Counter, CompressionStage, Compressor, GateAbsorbedStage
 from ..graph.nodes import GateAbsorptionCounter, InputStage, PipelineStage
 from ..graph.accumulator import AccumulatorStage

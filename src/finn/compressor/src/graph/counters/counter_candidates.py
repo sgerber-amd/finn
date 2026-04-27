@@ -1,3 +1,12 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    LUT-based counter and gate absorption atom implementations
+# @author    Co-authored by Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 from itertools import count
 from ..nodes import Counter, Constant, GateAbsorptionCounter
 from abc import ABC, abstractmethod
@@ -651,6 +660,7 @@ class MuxCYAtomCascade(Counter):
                 self.input_wires[idx+1][0].connect_to(luts[idx+1].I3)
                 idx += 2
             elif isinstance(atom, MuxCYAtom06):
+                # First LUT (atom06_lo): uses all 6 inputs for XOR
                 self.input_wires[idx][0].connect_to(luts[idx].I0)
                 self.input_wires[idx][1].connect_to(luts[idx].I1)
                 self.input_wires[idx][2].connect_to(luts[idx].I2)
@@ -658,11 +668,13 @@ class MuxCYAtomCascade(Counter):
                 self.input_wires[idx][4].connect_to(luts[idx].I4)
                 self.input_wires[idx][5].connect_to(luts[idx].I5)
 
-                self.input_wires[idx][0].connect_to(luts[idx].I0)
-                self.input_wires[idx][1].connect_to(luts[idx].I1)
-                self.input_wires[idx][2].connect_to(luts[idx].I2)
-                self.input_wires[idx][3].connect_to(luts[idx].I3)
-                self.input_wires[idx][4].connect_to(luts[idx].I4)
+                # Second LUT (atom06_hi): uses inputs 0-4 for carry propagation
+                # BUGFIX: was connecting to luts[idx] instead of luts[idx+1]
+                self.input_wires[idx][0].connect_to(luts[idx+1].I0)
+                self.input_wires[idx][1].connect_to(luts[idx+1].I1)
+                self.input_wires[idx][2].connect_to(luts[idx+1].I2)
+                self.input_wires[idx][3].connect_to(luts[idx+1].I3)
+                self.input_wires[idx][4].connect_to(luts[idx+1].I4)
                 idx += 2
             else:
                 raise Exception("Error in construction of MuxCYAtoms")
@@ -691,11 +703,11 @@ class MuxCYAtomCascadeCandidate(CounterCandidate):
         i = 0
         while (i < 4):
             if i == 0:
-                # MuxCYAtom06 disabled for now - needs more debugging
-                # if fits_col(i, 7):
-                #     atoms.append(MuxCYAtom06())
-                #     i += 2
-                if fits_col(i, 5) and fits_col(i+1, 1):
+                # MuxCYAtom06: 6:3 compressor for column 0 (needs 7 inputs: 6 + carry-in)
+                if fits_col(i, 7):
+                    atoms.append(MuxCYAtom06())
+                    i += 2
+                elif fits_col(i, 5) and fits_col(i+1, 1):
                     atoms.append(MuxCYAtom14())
                     i += 2
                 elif fits_col(i, 3):
@@ -704,11 +716,11 @@ class MuxCYAtomCascadeCandidate(CounterCandidate):
                 else:
                     break
             elif i < 3:
-                # MuxCYAtom06 disabled for now
-                # if fits_col(i, 6):
-                #     atoms.append(MuxCYAtom06())
-                #     i += 2
-                if fits_col(i, 4) and fits_col(i+1, 1):
+                # MuxCYAtom06: 6:3 compressor for middle columns
+                if fits_col(i, 6):
+                    atoms.append(MuxCYAtom06())
+                    i += 2
+                elif fits_col(i, 4) and fits_col(i+1, 1):
                     atoms.append(MuxCYAtom14())
                     i += 2
                 elif fits_col(i, 2):

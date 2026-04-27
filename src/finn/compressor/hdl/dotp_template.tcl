@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Vivado simulation script for standalone dot product compressor
+#############################################################################
+
 # Create Fresh Project
 set sig {n}x{sa}{na}{sb}{nb}
 set top dotp_$sig

@@ -26,15 +26,15 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import numpy as np
 import warnings
 from onnx import helper
+from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
-from finn.util.basic import get_dsp_block, is_versal
+from finn.util.basic import is_versal
 
 
 def _determine_impl_style(node, fpgapart, model):
@@ -134,8 +134,8 @@ def _determine_impl_style(node, fpgapart, model):
                 return "rtl"
             else:
                 warn_str = """There is no RTL variant for %s. The node will automatically be
-                        set to HLS variant. Please check the bit-widths to be <= 8 and ensure the
-                        thresholds are implemented as standalone layer""" % (
+                        set to HLS variant. Ensure thresholds are implemented as standalone layer
+                        and weights are signed""" % (
                     node.name,
                 )
                 warnings.warn(warn_str)
@@ -217,55 +217,31 @@ def _dwc_determine_impl_style(node):
 
 def _mvu_rtl_possible(n, fpgapart, model):
     # Checks whether RTL-based MVU is supported
-    # Currently, for DSP48 we only support computations up to
-    # 8sx8u (8-bit signed weights x 8-bit (un)signed activations)
-    # and for DSP58 we support up to 8sx9s.
-    # Please note, DSP48E1 does only support narrow range for weights
-    # Next to that, embedded thresholding functionality is not supported
-    # and neither binaryxnormode computation.
+    # RTL MVU uses either DSP blocks (for larger bitwidths) or LUT-based compressor (WW<=4 && AW<=4)
+    # Weights must be signed, activations can be unsigned or signed
+    # Embedded thresholding and binaryXnorMode are not supported
     node_inst = getCustomOp(n)
     # first check if no Activation or binary xnor mode and return False
     # immediately if one of them is True
     no_activation = node_inst.get_nodeattr("noActivation") == 0
-    not_binaryxnor_mode = node_inst.get_nodeattr("binaryXnorMode") == 1
-    if no_activation or not_binaryxnor_mode:
+    is_binaryxnor_mode = node_inst.get_nodeattr("binaryXnorMode") == 1
+    if no_activation or is_binaryxnor_mode:
         return False
 
-    # check if weights are signed, if not return False
+    idt = node_inst.get_input_datatype(0)
     wdt = node_inst.get_input_datatype(1)
+
+    if idt == DataType["BIPOLAR"] or wdt == DataType["BIPOLAR"]:
+        return False
+
+    # INT1 is untested
+    if idt == DataType["INT1"] or wdt == DataType["INT1"]:
+        return False
+
     if not wdt.signed():
         return False
 
-    # check which dsp block is available on fpga
-    dsp_block = get_dsp_block(fpgapart)
-    # check if weights are narrow
-    weights = model.get_initializer(n.input[1])
-    # if dynamic input, set minimum of weights to wdt.min()
-    # otherwise set it to the minimum value in the weight matrix
-    if weights is None:
-        weights_min = wdt.min()
-    else:
-        weights_min = np.min(weights)
-    narrow_weights = False if weights_min == wdt.min() else True
-    # NOTE: Narrow weight check for DSP48E1 removed (previously returned False for
-    # narrow_weights=False on DSP48E1). Rationale:
-    # - Compressor path (LUT-based, WW<=4 && AW<=4): No narrow weight constraint, works
-    #   with full weight range including wdt.min()
-    # - DSP path: Handles narrow weights via NARROW_WEIGHTS module parameter in mvu.sv,
-    #   which adjusts lane slicing to accommodate narrow range
-    # - Test suite: Removed weight clipping in test_fpgadataflow_mvau.py line 785
-    #   (previously forced W = np.clip(W, wdt.min()+1, wdt.max()) on xc7z020)
-    # - Result: Both paths now accept full weight range, narrow_weights computed but not
-    #   used as a gating condition for RTL eligibility
-
-    # if none of the above constraints have been triggered
-    # we now check if input and weight data types are in range
-    # we only use rtl mvau if the dtypes are at least 2 bit
-    idt = node_inst.get_input_datatype()
-    inp_width_in_range = (2 <= idt.bitwidth() <= 8) or (idt.bitwidth() == 9 and idt.signed())
-    weight_width_in_range = 2 <= wdt.bitwidth() <= 8
-
-    return inp_width_in_range and weight_width_in_range
+    return True
 
 
 def _vvu_rtl_possible(n, fpgapart):

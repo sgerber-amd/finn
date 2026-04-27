@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Compressor tree constructor with two-pass accumulator handling
+#############################################################################
+
 from typing import Tuple, List
 from .compressor_pipeliner import CompressorPipeliner
 from ..graph.accumulator import AccumulatorStage

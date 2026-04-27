@@ -1,3 +1,12 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Vivado simulation script for add_multi compressor testbench
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 # Vivado batch flow for standalone add_multi compressor test.
 # Behavioral simulation only — verifies the generated compressor produces correct sums.
 #

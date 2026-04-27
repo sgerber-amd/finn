@@ -1,3 +1,11 @@
+/******************************************************************************
+ * Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * @brief	Testbench template for standalone dot product compressor
+ *****************************************************************************/
+
 module dotp_{n}x{sa}{na}{sb}{nb}_tb #(
 	localparam int unsigned  N = {n},
 	localparam int unsigned  NA = {na},

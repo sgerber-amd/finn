@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Verilog emitter for compressor tree
+#############################################################################
+
 from io import StringIO
 from contextlib import contextmanager
 from collections import defaultdict
@@ -115,6 +123,9 @@ class VerilogGenerator(Visitor):
         s.input_wires.accept(self)
         if hasattr(s, "input_wires_complementary"):
             s.input_wires_complementary.accept(self)
+        # Visit output_wires if they're separate from input_wires (trivial passthrough case)
+        if s.output_wires is not s.input_wires:
+            s.output_wires.accept(self)
 
     def visit_accumulator_stage(self, a: AccumulatorStage):
         self.emitter.emitln()

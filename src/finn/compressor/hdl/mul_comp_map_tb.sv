@@ -1,9 +1,14 @@
-/**
- * Copyright (C) 2024, Advanced Micro Devices, Inc.
- * All rights reserved.
+/******************************************************************************
+ * Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
  *
- * @author	Thomas B. Preußer <thomas.preusser@amd.com>
- * @brief   Quick visualizer for compressor input broadcasting.
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * @brief	Testbench for multiplier-to-compressor mapping verification
+ * @author	Thomas B. Preußer <thomas.preusser@amd.com>, Simon Gerber <simon.gerber@amd.com>
+ *****************************************************************************/
+
+/**
+ * Quick visualizer for compressor input broadcasting.
  */
 
 module mul_comp_map_tb;

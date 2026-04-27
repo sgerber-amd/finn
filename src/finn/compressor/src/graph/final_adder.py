@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Final adder implementations for compressor output stage
+#############################################################################
+
 from abc import abstractstaticmethod
 from typing import List
 from .nodes import Counter

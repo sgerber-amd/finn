@@ -1,4 +1,12 @@
 #!/bin/bash
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Master test runner for all compressor tests
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
 
 # If asserted, logs are kept.
 ((${KEEP_LOG:=0}))
@@ -6,7 +14,7 @@
 ((${MAX_WORKERS:=12}))
 # Constant Absorption Option
 ca="$1"
-# Target platform (versal or 7series)
+# Target platform (versal, 7series, or ultrascale)
 target="${2:-versal}"
 
 # PYTHONPATH so python -m finn.compressor.src.* resolves

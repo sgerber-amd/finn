@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Multiplier-to-compressor input mapping utilities
+#############################################################################
+
 class MulCompMap:
     def __init__(self, na: int, nb: int, sa: bool, sb: bool):
         self.na = na

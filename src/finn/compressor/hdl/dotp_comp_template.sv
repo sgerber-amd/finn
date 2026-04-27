@@ -1,12 +1,16 @@
 /******************************************************************************
- * Copyright (C) 2024, Advanced Micro Devices, Inc.
- * All rights reserved.
+ * Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
- * @brief	LUT-based dot product with fused accumulation.
- * @details	Drop-in replacement for DSP-based compute cores in the MVU.
- *		Uses a generated compressor tree for the reduction.
+ * @brief	RTL template for dot product compressor with accumulation
+ * @author	Simon Gerber <simon.gerber@amd.com>
+ *****************************************************************************/
+
+/**
+ * LUT-based dot product with fused accumulation.
+ * Drop-in replacement for DSP-based compute cores in the MVU.
+ * Uses a generated compressor tree for the reduction.
  *
  *		This file is a TEMPLATE — $COMP_MODULE_NAME$ is substituted
  *		at code generation time with the config-specific compressor
@@ -132,5 +136,19 @@ module dotp_comp #(
 		assign	p[pe] = $signed(comp_out);
 
 	end : genPE
+
+	//-----------------------------------------------------------------------
+	// Parameter Validation
+	//-----------------------------------------------------------------------
+	initial begin
+		if (SIMD != $EXPECTED_SIMD$ || NA != $EXPECTED_NA$ || NB != $EXPECTED_NB$ ||
+		    SIGNED_A != $EXPECTED_SIGNED_A$ || SIGNED_B != $EXPECTED_SIGNED_B$ ||
+		    ACCU_WIDTH != $EXPECTED_ACCU_WIDTH$) begin
+			$warning("%m: CRITICAL - dotp_comp parameter mismatch! SIMD=%0d (expected %0d), NA=%0d (expected %0d), NB=%0d (expected %0d), SIGNED_A=%0d (expected %0d), SIGNED_B=%0d (expected %0d), ACCU_WIDTH=%0d (expected %0d)",
+			         SIMD, $EXPECTED_SIMD$, NA, $EXPECTED_NA$, NB, $EXPECTED_NB$,
+			         SIGNED_A, $EXPECTED_SIGNED_A$, SIGNED_B, $EXPECTED_SIGNED_B$,
+			         ACCU_WIDTH, $EXPECTED_ACCU_WIDTH$);
+		end
+	end
 
 endmodule : dotp_comp

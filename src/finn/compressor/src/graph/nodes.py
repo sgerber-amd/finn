@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Compressor graph node definitions and delay estimation
+#############################################################################
+
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict

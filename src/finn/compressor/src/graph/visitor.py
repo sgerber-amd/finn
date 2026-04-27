@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Visitor pattern for compressor graph traversal
+#############################################################################
+
 from abc import ABC
 from .nodes import Counter, CompressionStage, Compressor, InputStage, PipelineStage
 from .nodes import Logic, Bitmatrix, GateAbsorbedStage, GateAbsorptionCounter

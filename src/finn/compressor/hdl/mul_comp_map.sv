@@ -1,10 +1,14 @@
-/**
- * Copyright (C) 2024, Advanced Micro Devices, Inc.
- * All rights reserved.
+/******************************************************************************
+ * Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
  *
- * @brief
- *	Broadcasts multiplication inputs to feed a bit product matrix for compression.
- * @author	Thomas B. Preußer <thomas.preusser@amd.com>
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * @brief	Multiplier-to-compressor mapping module for gate absorption
+ * @author	Thomas B. Preußer <thomas.preusser@amd.com>, Simon Gerber <simon.gerber@amd.com>
+ *****************************************************************************/
+
+/**
+ * Broadcasts multiplication inputs to feed a bit product matrix for compression.
  *
  * @description
  *	This interface component broadcasts multiplication inputs to produce a bit
@@ -205,8 +209,9 @@ interface mul_comp_map #(
 		for(genvar  col = 0; col < NA-NB; col++) begin
 			localparam int unsigned  TOP = NB*(NB+1)/2 + col*NB + SIGNED_B;
 			for(genvar  row = 0; row < NB; row++) begin
-				assign	oa[TOP + col*NB + row] = ia[NB+col - row];
-				assign	ob[TOP + col*NB + row] = ib[row];
+				assign  oa[TOP + row] = ia[NB+col - row];
+				assign  ob[TOP + row] = ib[row];
+
 			end
 		end
 

@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Node iterator pass for compressor graph traversal
+#############################################################################
+
 from ..graph.primitives import LOOKAHEAD8
 from ..graph.visitor import Visitor
 from ..graph.nodes import Counter, CompressionStage, Compressor, InputStage, PipelineStage

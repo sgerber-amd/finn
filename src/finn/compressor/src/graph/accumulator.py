@@ -1,3 +1,11 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    Accumulator stage implementation for compressor
+#############################################################################
+
 from .nodes import Shape, Wire, Logic, Stage, Bitmatrix
 from collections.abc import Iterable
 

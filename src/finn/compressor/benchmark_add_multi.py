@@ -33,6 +33,7 @@ from finn.compressor.benchmark_utils import (
     BOARD_CONFIGS,
     compute_latency_cycles,
     format_config_label,
+    parse_dsp_counts,
 )
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
@@ -112,11 +113,20 @@ def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_pe
 
     build.build_dataflow_cfg(model, cfg)
 
-    # Read synthesis results
+    # Read synthesis results (using same parsing as benchmark_hls_vs_compressor.py)
     synth_report_path = os.path.join(output_dir, "report", "ooc_synth_and_timing.json")
     if os.path.exists(synth_report_path):
         with open(synth_report_path) as f:
-            return json.load(f)
+            data = json.load(f)
+            return {
+                "LUT": data.get("LUT", 0),
+                "DSP": parse_dsp_counts(data),  # Handle platform-specific DSP reporting
+                "FF": data.get("FF", 0),
+                "BRAM": data.get("BRAM_18K", 0),
+                "WNS": data.get("WNS", 0),
+                "fmax_mhz": data.get("fmax_mhz", 0),
+                "vivado_proj_folder": data.get("vivado_proj_folder"),  # For timing search
+            }
     else:
         return None
 
@@ -185,7 +195,7 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                                 vivado_proj_folder=vivado_proj_folder,
                                 top_name=top_name,
                                 clk_name="ap_clk",
-                                clk_period_ns_min=2.0,  # Aggressive (500 MHz)
+                                clk_period_ns_min=1.0,  # Aggressive (1000 MHz)
                                 clk_period_ns_max=20.0,  # Conservative (50 MHz)
                             )
 
@@ -290,20 +300,26 @@ if __name__ == "__main__":
     board = board_config["board"]
     fpga_part = board_config["part"]
 
-    # Test configurations - 8-bit operands on 7-Series
-    # 7-Series has no genINT8 fast path, so 8×8 uses standard mvu.sv with add_multi
+    # Test configurations - 8-bit operands on 7-Series/UltraScale+, 10-bit on Versal
+    # 7-Series/UltraScale+: W8/A8 uses standard mvu.sv with add_multi (no genINT8)
+    # Versal: W10/A10 bypasses genINT8 (which requires W<=8 AND A<=9), forces genSoftVec with add_multi
     # add_multi compressors only activate when SIMD >= 4
+
+    # Determine bit-widths based on board
+    if args.board.lower() == 'vck190':
+        # Versal: Use W10/A10 to bypass genINT8 and force add_multi path
+        ww, aw = 10, 10
+    else:
+        # 7-Series/UltraScale+: Use W8/A8 (no genINT8 on these platforms)
+        ww, aw = 8, 8
+
     configs = [
-        
         # (MW, MH, PE, SIMD, WW, AW)
-        (16, 16, 2, 2, 8, 8),    # SIMD<4: binary tree baseline
-        (32, 18, 9, 4, 8, 8),    # SIMD=4: minimal compressor
-        (32, 18, 9, 8, 8, 8),    # SIMD=8: common config
-        (32, 18, 9, 16, 8, 8),   # SIMD=16: higher fanin
-        (32, 18, 9, 32, 8, 8),   # SIMD=32: maximum fanin
-        #(32, 18, 9, 8, 4, 4),    # 4-bit: less overflow
-        #(32, 18, 9, 8, 6, 6),    # 6-bit: medium
-        #(32, 18, 9, 8, 8, 8),    # 8-bit: full width
+        (16, 16, 2, 2, ww, aw),    # SIMD<4: binary tree baseline
+        (32, 18, 9, 4, ww, aw),    # SIMD=4: minimal compressor
+        (32, 18, 9, 8, ww, aw),    # SIMD=8: common config
+        (32, 18, 9, 16, ww, aw),   # SIMD=16: higher fanin
+        (32, 18, 9, 32, ww, aw),   # SIMD=32: maximum fanin
     ]
 
     # Default work directory

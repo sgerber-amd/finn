@@ -1,3 +1,12 @@
+#############################################################################
+# Copyright (C) 2024 - 2025 Advanced Micro Devices, Inc. All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# @brief    FINN wrapper for add_multi compressor generation
+# @author    Simon Gerber <simon.gerber@amd.com>
+#############################################################################
+
 """
 Generate a compressor core for FINN's add_multi module (COMP path).
 
@@ -211,12 +220,7 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
     Generate add_multi compressor cores and patch add_multi.sv.
     This is the high-level entry point called by FINN's generate_hdl().
 
-    ALWAYS generates add_multi.sv in output_dir, either:
-    - Patched version with CATCH_COMP entries if compressors are eligible
-    - Copy of template if ineligible (SIMD < 4 or version == 2)
-
-    This ensures every node has code_gen_dir/add_multi.sv, eliminating
-    conditional logic in file management.
+    ALWAYS generates compressors and patches add_multi.sv with CATCH_COMP entries.
 
     Parameters
     ----------
@@ -241,13 +245,7 @@ def generate_add_multi_comps(fpgapart, version, simd, ww, aw, accu_width,
     rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
     patched_path = os.path.join(output_dir, "add_multi.sv")
 
-    # Check eligibility (same logic as _is_add_multi_comp_eligible)
-    if version == 2 or simd < 4:
-        # Ineligible: just copy template as-is
-        shutil.copy(os.path.join(rtllib_dir, "add_multi.sv"), patched_path)
-        return {"comp_names": [], "files": [patched_path]}
-
-    # Eligible: generate compressors and patch add_multi.sv
+    # Always generate compressors and patch add_multi.sv
     target = resolve_target(fpgapart)
 
     # This is currently a parallel implementation of the lo_width computation in mvu.sv's sliceLanes() function.
@@ -304,7 +302,7 @@ def main():
     parser.add_argument('--n', type=int, required=True,
                         help="Number of unsigned addends (= SIMD)")
     parser.add_argument('-t', '--target', default="Versal",
-                        choices=["Versal", "7-Series"],
+                        choices=["Versal", "7-Series", "UltraScale"],
                         help="Target FPGA generation")
     parser.add_argument('-p', '--pipeline_every', type=int, default=None,
                         help="Pipeline registers every N combinational stages")
