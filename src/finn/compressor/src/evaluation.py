@@ -6,41 +6,45 @@
 # @brief    Evaluation and benchmarking utilities for compressor
 #############################################################################
 
-from .target import Versal
-from .utils.shape import Shape
-from .main import generate_compressor
-from .tests.test_gen import compressed_width
-from concurrent.futures import ThreadPoolExecutor
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+
+from .main import generate_compressor
+from .target import Versal
+from .tests.test_gen import compressed_width
+from .utils.shape import Shape
+
 
 def evaluation():
     examples = {
         "128": Shape([128]),
         "256": Shape([256]),
         "512": Shape([512]),
-        "128,128": Shape([128,128]),
-        "256,256": Shape([256,256]),
-        "512,512": Shape([512,512]),
-        "Int1": Shape([1,1,2,3,4,5,6,7,5,4,3,2,1]),
-        "Int2": Shape([1,1,1,3,5,7,9,11,13,10,8,6,4,2,1]),
-        "Int3": Shape([1,1,1,1,5,9,13,17,21,25,20,16,12,8,4]),
-        "Int4": Shape([1,1,1,1,1,9,17,25,33,41,49,40,32,24,16,8]),
-        "Int5": Shape([1,1,1,1,1,1,17,33,49,65,81,97,80,64,48,32,16]),
-        "LPFP1": Shape([1,1,1,1,1,1,1,1,1,1,1,1,1,1,2]),
-        "LPFP2": Shape([2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,4]),
-        "LPFP3": Shape([4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,8]),
-        "LPFP4": Shape([8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,16]),
-        "LPFP5": Shape([16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,32]),
-        "6x32": Shape(32*[6]),
-        "10x32": Shape(32*[10]),
-        "Mul16": Shape(list(range(1, 17)) + list(reversed(range(1, 16))))
+        "128,128": Shape([128, 128]),
+        "256,256": Shape([256, 256]),
+        "512,512": Shape([512, 512]),
+        "Int1": Shape([1, 1, 2, 3, 4, 5, 6, 7, 5, 4, 3, 2, 1]),
+        "Int2": Shape([1, 1, 1, 3, 5, 7, 9, 11, 13, 10, 8, 6, 4, 2, 1]),
+        "Int3": Shape([1, 1, 1, 1, 5, 9, 13, 17, 21, 25, 20, 16, 12, 8, 4]),
+        "Int4": Shape([1, 1, 1, 1, 1, 9, 17, 25, 33, 41, 49, 40, 32, 24, 16, 8]),
+        "Int5": Shape([1, 1, 1, 1, 1, 1, 17, 33, 49, 65, 81, 97, 80, 64, 48, 32, 16]),
+        "LPFP1": Shape([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2]),
+        "LPFP2": Shape([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4]),
+        "LPFP3": Shape([4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]),
+        "LPFP4": Shape([8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 16]),
+        "LPFP5": Shape(
+            [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 32]
+        ),
+        "6x32": Shape(32 * [6]),
+        "10x32": Shape(32 * [10]),
+        "Mul16": Shape(list(range(1, 17)) + list(reversed(range(1, 16)))),
     }
 
     filenames = []
     for example_name, example_shape in examples.items():
         print(example_name, example_shape)
         # combinatorial design
-        filename = "../gen/"+example_name+"_comb.sv"
+        filename = "../gen/" + example_name + "_comb.sv"
         generate_compressor(
             target=Versal(),
             shape=example_shape,
@@ -51,13 +55,14 @@ def evaluation():
             gates=None,
             constants=[],
             path=filename,
-            test=True
+            test=True,
         )
-        generate_wrapper(shape=example_shape, pipelined=False, gates=False,
-                         accumulation=False, filename=filename)
+        generate_wrapper(
+            shape=example_shape, pipelined=False, gates=False, accumulation=False, filename=filename
+        )
         filenames.append(filename)
         # accumulating design
-        filename = "../gen/"+example_name+"_acc.sv"
+        filename = "../gen/" + example_name + "_acc.sv"
         generate_compressor(
             target=Versal(),
             shape=example_shape,
@@ -68,13 +73,14 @@ def evaluation():
             gates=None,
             constants=[],
             path=filename,
-            test=True
+            test=True,
         )
-        generate_wrapper(shape=example_shape, pipelined=True, gates=False,
-                         accumulation=True, filename=filename)
+        generate_wrapper(
+            shape=example_shape, pipelined=True, gates=False, accumulation=True, filename=filename
+        )
         filenames.append(filename)
         # gate inlined design with accumulation
-        filename = "../gen/"+example_name+"_gate.sv"
+        filename = "../gen/" + example_name + "_gate.sv"
         generate_compressor(
             target=Versal(),
             shape=example_shape,
@@ -85,26 +91,29 @@ def evaluation():
             gates=[["8" for el in range(col)] for col in example_shape],
             constants=[],
             path=filename,
-            test=True
+            test=True,
         )
-        generate_wrapper(shape=example_shape, pipelined=True, gates=True,
-                         accumulation=True, filename=filename)
+        generate_wrapper(
+            shape=example_shape, pipelined=True, gates=True, accumulation=True, filename=filename
+        )
         filenames.append(filename)
 
     tclfiles = [emit_eval_tcl_script(el) for el in filenames]
 
     def call_vivado(filename):
         command = f"""cd ../gen/ &&
-            ls && 
-            source /proj/xbuilds/released/2023.1/2023.1_0508_1/installs/lin64/Vivado/2023.1/settings64.sh && 
+            ls &&
+            source /proj/xbuilds/released/2023.1/2023.1_0508_1/installs/lin64/Vivado/2023.1/settings64.sh &&
             vivado -mode batch -source {filename.split("/")[-1]}"""
-        return subprocess.run(command, shell=True, check=True, timeout=3600, 
-                              text=True, executable="/bin/bash")
+        return subprocess.run(
+            command, shell=True, check=True, timeout=3600, text=True, executable="/bin/bash"
+        )
 
     print("Executing evaluation threads")
     with ThreadPoolExecutor(max_workers=15) as executor:
         executor.map(call_vivado, tclfiles)
     print("Done executing evaluation threads")
+
 
 def generate_wrapper(shape, pipelined, gates, accumulation, filename):
     iw = sum(shape)
@@ -121,12 +130,12 @@ def generate_wrapper(shape, pipelined, gates, accumulation, filename):
     input_str = "\tinput " + ", ".join(inputs) + ",\n"
     output_str = f"\toutput logic [{ow-1}:0] outReg"
 
-    wrapper_str =  (
-    "module sandwich(\n" +
-    input_str + 
-    output_str +
-    '\n);\n' + 
-    f"""
+    wrapper_str = (
+        "module sandwich(\n"
+        + input_str
+        + output_str
+        + "\n);\n"
+        + f"""
 \t{"logic en_negReg, rstReg;" if accumulation else ""}
 \tlogic [{iw-1}:0] inReg{", in_2Reg;" if gates else ";"}
 \twire [{ow-1}:0] out;
@@ -141,17 +150,20 @@ def generate_wrapper(shape, pipelined, gates, accumulation, filename):
 \t
 \t(* keep_hierarchy = "yes" *)
 \tcomp c(.in(inReg), .clk(clk),{" .in_2(in_2Reg)," if gates else ""
-                                }{" .en_neg(en_negReg), .rst(rstReg)," 
+                                }{" .en_neg(en_negReg), .rst(rstReg),"
                                   if accumulation else ""} .out(out));
 
 endmodule"""
     )
-    with open(filename, 'a') as f:
+    with open(filename, "a") as f:
         f.writelines(wrapper_str)
 
+
 def emit_eval_tcl_script(compressor_path):
-    comps = "set comps { " + str(compressor_path.split("/")[-1])  + " }"
-    script = comps + """
+    comps = "set comps { " + str(compressor_path.split("/")[-1]) + " }"
+    script = (
+        comps
+        + """
 set PART xcvc1902-vsva2197-2MP-e-S ; # From VCK190 Evaluation Board
 
 foreach comp $comps {
@@ -176,7 +188,7 @@ foreach comp $comps {
     synth_design -top sandwich -part $PART
 
     # -----------------------------------------------------------------------------
-    # while loop, updating clock 
+    # while loop, updating clock
     while {[expr $ts - $tm] > 0.1} {
         puts "NEW SYNTHESIS RUN WITH FREQ $tt"
         create_clock -name CLK -period $tt [get_port clk]
@@ -204,7 +216,7 @@ foreach comp $comps {
         }
 
         # -----------------------------------------------------------------------------
-        # Find LUT and Slice utilization 
+        # Find LUT and Slice utilization
         set f [open util_$comp.twrA r]
         set file_data [read $f]
         close $f
@@ -227,7 +239,7 @@ foreach comp $comps {
             set tm $tt
             if { $tr < $ts } {
                 set ts $tr
-            } 
+            }
         } else {
             set ts $tr
         }
@@ -244,10 +256,12 @@ foreach comp $comps {
 }
 q
 """
+    )
     tclpath = compressor_path.replace(".sv", ".tcl")
     with open(tclpath, "w") as f:
         f.writelines(script)
     return tclpath
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     evaluation()

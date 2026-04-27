@@ -27,7 +27,7 @@ python -m finn.compressor.benchmark_hls_vs_compressor \
     --mvau-only \
     --synth-clk-period-ns 10.0 \
     --work-dir "$WORK_DIR" \
-    2>&1 | tee "$WORK_DIR/run.log" 
+    2>&1 | tee "$WORK_DIR/run.log"
 
 echo ""
 echo "=========================================="

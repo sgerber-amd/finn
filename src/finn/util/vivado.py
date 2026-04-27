@@ -29,16 +29,16 @@
 import os
 import subprocess
 
-
 from finn.util.basic import launch_process_helper, which
+
 """
 
 def _parse_utilization_report_fallback(vivado_proj_folder, clk_period_ns):
     """
-    #Parse Vivado utilization report directly when res.txt is missing or malformed.
+# Parse Vivado utilization report directly when res.txt is missing or malformed.
 
-    #   This fallback handles cases where Oh-My-Xilinx crashes before writing res.txt
-    #  (e.g., TCL piping syntax errors in vivadocompile.tcl).
+#   This fallback handles cases where Oh-My-Xilinx crashes before writing res.txt
+#  (e.g., TCL piping syntax errors in vivadocompile.tcl).
 """
     import re
 
@@ -119,6 +119,7 @@ def _parse_utilization_report_fallback(vivado_proj_folder, clk_period_ns):
     return ret
 """
 
+
 def out_of_context_synth(
     verilog_dir,
     top_name,
@@ -174,17 +175,23 @@ def out_of_context_synth(
             # Known issues: "DSP=X.DSP", empty values, TCL errors embedded in output
             if key == "DSP":
                 import re
-                utilization_rpt = vivado_proj_folder + "/vivadocompile/vivadocompile.runs/synth_1/finn_design_wrapper_utilization_synth.rpt"
+
+                utilization_rpt = (
+                    vivado_proj_folder
+                    + "/vivadocompile/vivadocompile.runs/synth_1/finn_design_wrapper_utilization_synth.rpt"
+                )
                 try:
                     with open(utilization_rpt, "r") as urpt:
                         urpt_data = urpt.read()
                         # Look for DSP table: | DSPs      |    4 |  or  | DSP48E1 only |    4 |
-                        match = re.search(r'\|\s*DSPs\s*\|\s*(\d+)\s*\|', urpt_data)
+                        match = re.search(r"\|\s*DSPs\s*\|\s*(\d+)\s*\|", urpt_data)
                         if match:
                             ret[key] = float(match.group(1))
                         else:
                             # Try specific DSP types (DSP48E1, DSP48E2, DSP58)
-                            dsp_matches = re.findall(r'\|\s*DSP\d+[^\|]*only\s*\|\s*(\d+)\s*\|', urpt_data)
+                            dsp_matches = re.findall(
+                                r"\|\s*DSP\d+[^\|]*only\s*\|\s*(\d+)\s*\|", urpt_data
+                            )
                             ret[key] = float(sum(int(x) for x in dsp_matches)) if dsp_matches else 0
                 except FileNotFoundError:
                     # Can't read report - try to parse res.txt value as fallback
@@ -200,7 +207,8 @@ def out_of_context_synth(
             except ValueError:
                 # Handle other malformed values
                 import re
-                match = re.match(r'^([0-9.]+)', val_str)
+
+                match = re.match(r"^([0-9.]+)", val_str)
                 if match:
                     ret[key] = float(match.group(1))
                 else:
@@ -249,7 +257,8 @@ def timing_closure_search_from_synth(
     tcl_script = os.path.join(vivado_proj_folder, "timing_search_resume.tcl")
 
     with open(tcl_script, "w") as f:
-        f.write(f"""# Resume timing search from existing synthesis
+        f.write(
+            f"""# Resume timing search from existing synthesis
 # Open existing project
 open_project {vivado_proj_folder}/vivadocompile/vivadocompile.xpr
 
@@ -282,7 +291,7 @@ if {{$orig_xdc ne ""}} {{
     remove_files -fileset $constr_set $orig_xdc
 }}
 
-# Create tmp.xdc for dynamic constraints 
+# Create tmp.xdc for dynamic constraints
 close [open tmp.xdc w]
 add_files -fileset $constr_set tmp.xdc
 set_property target_constrs_file tmp.xdc $constr_set
@@ -378,7 +387,8 @@ close $fp
 
 puts "INFO: Results written to res_timing.txt"
 exit
-""")
+"""
+        )
 
     # Run Vivado with the script with timeout
     cmd = ["vivado", "-mode", "batch", "-source", tcl_script]
@@ -427,9 +437,11 @@ exit
     if "intermediate" in res_path:
         ret["incomplete"] = True
         ret["timeout"] = True
-        print(f"         Recovered: period={ret.get('achieved_period_ns')}ns, "
-              f"fmax={ret.get('achieved_fmax_mhz'):.1f} MHz, "
-              f"iterations={int(ret.get('iterations', 0))} (incomplete)")
+        print(
+            f"         Recovered: period={ret.get('achieved_period_ns')}ns, "
+            f"fmax={ret.get('achieved_fmax_mhz'):.1f} MHz, "
+            f"iterations={int(ret.get('iterations', 0))} (incomplete)"
+        )
         print(f"         This is the BEST PASSING result before timeout/hang")
 
     return ret

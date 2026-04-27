@@ -32,11 +32,10 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from shutil import copy2
 
-from finn.util.basic import get_dsp_block, make_build_dir
-from finn.util.vivado import out_of_context_synth
-
 # Import helper from synth_ooc.py
 from finn.transformation.fpgadataflow.synth_ooc import generate_unified_add_multi
+from finn.util.basic import get_dsp_block, make_build_dir
+from finn.util.vivado import out_of_context_synth
 
 
 class SynthOutOfContextMVAUOnly(Transformation):
@@ -82,10 +81,10 @@ class SynthOutOfContextMVAUOnly(Transformation):
             # RTL MVAU: Copy core SystemVerilog files
             rtllib_mvu_dir = os.path.join(finn_root, "finn-rtllib/mvu")
             core_files = [
-                "mvu_vvu_axi.sv",       # Top-level MVAU core (NO wrapper!)
-                "mvu.sv",               # MVU implementation
-                "mvu_pkg.sv",           # Package definitions
-                "replay_buffer.sv",     # Weight replay buffer
+                "mvu_vvu_axi.sv",  # Top-level MVAU core (NO wrapper!)
+                "mvu.sv",  # MVU implementation
+                "mvu_pkg.sv",  # Package definitions
+                "replay_buffer.sv",  # Weight replay buffer
             ]
 
             # Add DSP-specific multiplier based on FPGA part
@@ -111,7 +110,9 @@ class SynthOutOfContextMVAUOnly(Transformation):
                     elif filename == "dotp_comp.sv":
                         copy2(os.path.join(code_gen_dir, filename), build_dir)
                         # dotp_comp.sv requires mul_comp_map.sv (parameter calculation helper)
-                        mul_comp_map_src = os.path.join(finn_root, "src/finn/compressor/hdl/mul_comp_map.sv")
+                        mul_comp_map_src = os.path.join(
+                            finn_root, "src/finn/compressor/hdl/mul_comp_map.sv"
+                        )
                         if os.path.exists(mul_comp_map_src):
                             copy2(mul_comp_map_src, build_dir)
 
@@ -178,13 +179,14 @@ class SynthOutOfContextMVAUOnly(Transformation):
             if comp_module_name:
                 # comp_module_name format: "comp_16xs2s2_a8_d3" where d3 is depth
                 import re
-                match = re.search(r'_d(\d+)$', comp_module_name)
+
+                match = re.search(r"_d(\d+)$", comp_module_name)
                 if match:
                     comp_depth = int(match.group(1))
 
             # Generate generics TCL file (same pattern as synth_ooc.py line 120-125)
             generics_tcl_path = os.path.join(build_dir, "mvau_generics.tcl")
-            with open(generics_tcl_path, 'w') as f:
+            with open(generics_tcl_path, "w") as f:
                 f.write(f"# Set MVAU generics on top module\n")
                 f.write(f"set_property generic {{\\\n")
                 f.write(f"    IS_MVU=1 \\\n")
@@ -207,7 +209,7 @@ class SynthOutOfContextMVAUOnly(Transformation):
         # .v files exist. Create a dummy .v file to prevent the crash.
         dummy_v_file = os.path.join(build_dir, "dummy_verilog_workaround.v")
         if not os.path.exists(dummy_v_file):
-            with open(dummy_v_file, 'w') as f:
+            with open(dummy_v_file, "w") as f:
                 f.write("// Dummy file to workaround Oh-My-Xilinx vivadoprojgen.sh bug\n")
 
         # Call Oh-My-Xilinx (same as synth_ooc.py line 126-128)
@@ -218,12 +220,7 @@ class SynthOutOfContextMVAUOnly(Transformation):
         #   4. Create results_<top_module_name>/vivadocompile/vivadocompile.xpr
         #   5. Run synthesis and generate res.txt with resource counts
         ret = out_of_context_synth(
-            build_dir,
-            top_module_name,
-            float_ip_tcl,
-            self.part,
-            self.clk_name,
-            self.clk_period_ns
+            build_dir, top_module_name, float_ip_tcl, self.part, self.clk_name, self.clk_period_ns
         )
 
         return ret

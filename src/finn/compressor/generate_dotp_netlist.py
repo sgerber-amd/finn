@@ -41,7 +41,7 @@ def compute_accu_width(vector_length, simd, ww, aw, signed_act):
         max_product = (2 ** (ww - 1)) * (2 ** (aw - 1))
     else:
         # Signed × Unsigned: range is -(2^(ww-1)) * (2^aw - 1) to +(2^(ww-1)-1) * (2^aw - 1)
-        max_product = (2 ** (ww - 1)) * (2 ** aw - 1)
+        max_product = (2 ** (ww - 1)) * (2**aw - 1)
 
     # Max accumulated value (worst case: all products at max magnitude, same sign)
     max_accum = num_acc_cycles * simd * max_product
@@ -62,34 +62,53 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate a dotp compressor netlist (PE-parallel, no MVAU wrappers)"
     )
-    parser.add_argument("--vector-length", type=int, required=True,
-                        help="Dot product vector length (must be divisible by SIMD)")
-    parser.add_argument("--simd", type=int, required=True,
-                        help="SIMD parallelism (products per cycle)")
-    parser.add_argument("--pe", type=int, required=True,
-                        help="PE parallelism (parallel dot products)")
-    parser.add_argument("--ww", type=int, required=True,
-                        help="Weight bit width (weights are always signed)")
-    parser.add_argument("--aw", type=int, required=True,
-                        help="Activation bit width")
-    parser.add_argument("--signed-act", action="store_true",
-                        help="Activations are signed (default: unsigned)")
-    parser.add_argument("--target", type=str, default="xc7z020clg400-1",
-                        help="FPGA part (e.g., xc7z020clg400-1, xcvc1902-...)")
-    parser.add_argument("--accu-width", type=int, default=None,
-                        help="Override accumulator width (auto-computed if not set)")
-    parser.add_argument("--pipeline-depth", type=int, default=None,
-                        help="Pipeline depth (auto-selected if not set)")
-    parser.add_argument("-o", "--output-dir", type=str, default="gen/",
-                        help="Output directory")
+    parser.add_argument(
+        "--vector-length",
+        type=int,
+        required=True,
+        help="Dot product vector length (must be divisible by SIMD)",
+    )
+    parser.add_argument(
+        "--simd", type=int, required=True, help="SIMD parallelism (products per cycle)"
+    )
+    parser.add_argument(
+        "--pe", type=int, required=True, help="PE parallelism (parallel dot products)"
+    )
+    parser.add_argument(
+        "--ww", type=int, required=True, help="Weight bit width (weights are always signed)"
+    )
+    parser.add_argument("--aw", type=int, required=True, help="Activation bit width")
+    parser.add_argument(
+        "--signed-act", action="store_true", help="Activations are signed (default: unsigned)"
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        default="xc7z020clg400-1",
+        help="FPGA part (e.g., xc7z020clg400-1, xcvc1902-...)",
+    )
+    parser.add_argument(
+        "--accu-width",
+        type=int,
+        default=None,
+        help="Override accumulator width (auto-computed if not set)",
+    )
+    parser.add_argument(
+        "--pipeline-depth", type=int, default=None, help="Pipeline depth (auto-selected if not set)"
+    )
+    parser.add_argument("-o", "--output-dir", type=str, default="gen/", help="Output directory")
     args = parser.parse_args()
 
     # Validate
     if args.vector_length % args.simd != 0:
-        raise ValueError(f"vector_length ({args.vector_length}) must be divisible by simd ({args.simd})")
+        raise ValueError(
+            f"vector_length ({args.vector_length}) must be divisible by simd ({args.simd})"
+        )
     if args.ww > 4 or args.aw > 4:
-        print(f"WARNING: Compressor path is designed for WW <= 4 and AW <= 4. "
-              f"Got WW={args.ww}, AW={args.aw}. DSP path may be more efficient.")
+        print(
+            f"WARNING: Compressor path is designed for WW <= 4 and AW <= 4. "
+            f"Got WW={args.ww}, AW={args.aw}. DSP path may be more efficient."
+        )
 
     # Compute accumulator width if not specified
     if args.accu_width:

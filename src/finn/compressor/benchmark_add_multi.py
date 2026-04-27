@@ -22,7 +22,6 @@ import csv
 import json
 import os
 import shutil
-
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import gen_finn_dt_tensor
 
@@ -36,8 +35,6 @@ from finn.compressor.benchmark_utils import (
     parse_dsp_counts,
 )
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
-
-
 
 
 def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_period_ns, pe, simd):
@@ -131,7 +128,9 @@ def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_pe
         return None
 
 
-def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns):
+def run_comparison(
+    mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns
+):
     """Run both RTL variants (with and without add_multi compressor) and compare."""
     label = format_config_label(mw, mh, pe, simd, ww, aw)
     print(f"  Config: {label}")
@@ -159,7 +158,14 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
             print(f"    Building {variant}...", flush=True)
             output_dir = os.path.join(run_dir, "output")
             synth_result = run_build(
-                model_path, output_dir, board, use_compressor, synth_only, synth_clk_period_ns, pe, simd
+                model_path,
+                output_dir,
+                board,
+                use_compressor,
+                synth_only,
+                synth_clk_period_ns,
+                pe,
+                simd,
             )
 
             if synth_result:
@@ -178,7 +184,9 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                     print(f"      Running timing search for {variant}...", flush=True)
                     from finn.util.vivado import timing_closure_search_from_synth
 
-                    synth_report_path = os.path.join(output_dir, "report", "ooc_synth_and_timing.json")
+                    synth_report_path = os.path.join(
+                        output_dir, "report", "ooc_synth_and_timing.json"
+                    )
 
                     if os.path.exists(synth_report_path):
                         with open(synth_report_path) as f:
@@ -213,12 +221,18 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                             if achieved_period > 0:
                                 latency_ns = exp_cycles * achieved_period
                                 results[variant]["latency_ns"] = latency_ns
-                                print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
+                                print(
+                                    f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                                )
                                 print(f"      Latency: {exp_cycles} cycles = {latency_ns:.2f} ns")
                             else:
-                                print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
+                                print(
+                                    f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                                )
                         else:
-                            print(f"      WARNING: vivado_proj_folder not found: {vivado_proj_folder}")
+                            print(
+                                f"      WARNING: vivado_proj_folder not found: {vivado_proj_folder}"
+                            )
                     else:
                         print(f"      WARNING: Synthesis report not found at {synth_report_path}")
 
@@ -237,8 +251,8 @@ def format_table(all_results):
     """Format comparison results as markdown table."""
     # Check if any result has timing search data
     has_timing = any(
-        results.get("rtl_binary_adder", {}).get("achieved_fmax_mhz") is not None or
-        results.get("rtl_compressor_adder", {}).get("achieved_fmax_mhz") is not None
+        results.get("rtl_binary_adder", {}).get("achieved_fmax_mhz") is not None
+        or results.get("rtl_compressor_adder", {}).get("achieved_fmax_mhz") is not None
         for _, results in all_results
     )
 
@@ -262,7 +276,9 @@ def format_table(all_results):
         compressor = results.get("rtl_compressor_adder", {})
 
         if "error" in binary or "error" in compressor:
-            lines.append(f"| {label} | ERROR | ERROR | ERROR | ERROR | ERROR | ERROR | ERROR | ERROR |")
+            lines.append(
+                f"| {label} | ERROR | ERROR | ERROR | ERROR | ERROR | ERROR | ERROR | ERROR |"
+            )
             continue
 
         lut_b = binary.get("LUT", 0)
@@ -290,7 +306,9 @@ if __name__ == "__main__":
     parser.add_argument("--board", choices=list(BOARD_CONFIGS.keys()), default="pynq-z1")
     parser.add_argument("--synth-only", action="store_true", help="Synthesis only (no bitfile)")
     parser.add_argument("--timing-search", action="store_true", help="Run timing closure search")
-    parser.add_argument("--synth-clk-period-ns", type=float, default=10.0, help="Target clock period")
+    parser.add_argument(
+        "--synth-clk-period-ns", type=float, default=10.0, help="Target clock period"
+    )
     parser.add_argument("--work-dir", type=str, help="Work directory for builds")
     parser.add_argument("--keep", action="store_true", help="Keep intermediate files")
 
@@ -306,7 +324,7 @@ if __name__ == "__main__":
     # add_multi compressors only activate when SIMD >= 4
 
     # Determine bit-widths based on board
-    if args.board.lower() == 'vck190':
+    if args.board.lower() == "vck190":
         # Versal: Use W10/A10 to bypass genINT8 and force add_multi path
         ww, aw = 10, 10
     else:
@@ -315,11 +333,11 @@ if __name__ == "__main__":
 
     configs = [
         # (MW, MH, PE, SIMD, WW, AW)
-        (16, 16, 2, 2, ww, aw),    # SIMD<4: binary tree baseline
-        (32, 18, 9, 4, ww, aw),    # SIMD=4: minimal compressor
-        (32, 18, 9, 8, ww, aw),    # SIMD=8: common config
-        (32, 18, 9, 16, ww, aw),   # SIMD=16: higher fanin
-        (32, 18, 9, 32, ww, aw),   # SIMD=32: maximum fanin
+        (16, 16, 2, 2, ww, aw),  # SIMD<4: binary tree baseline
+        (32, 18, 9, 4, ww, aw),  # SIMD=4: minimal compressor
+        (32, 18, 9, 8, ww, aw),  # SIMD=8: common config
+        (32, 18, 9, 16, ww, aw),  # SIMD=16: higher fanin
+        (32, 18, 9, 32, ww, aw),  # SIMD=32: maximum fanin
     ]
 
     # Default work directory
@@ -344,8 +362,17 @@ if __name__ == "__main__":
     for i, (mw, mh, pe, simd, ww, aw) in enumerate(configs):
         print(f"[{i+1}/{len(configs)}] mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}...", flush=True)
         label, results = run_comparison(
-            mw, mh, pe, simd, ww, aw, board, work_dir, args.synth_only,
-            args.timing_search, args.synth_clk_period_ns
+            mw,
+            mh,
+            pe,
+            simd,
+            ww,
+            aw,
+            board,
+            work_dir,
+            args.synth_only,
+            args.timing_search,
+            args.synth_clk_period_ns,
         )
         all_results.append((label, results))
 
@@ -362,11 +389,19 @@ if __name__ == "__main__":
     csv_path = os.path.join(work_dir, "add_multi_results.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "Config", "Implementation",
-            "LUT", "DSP", "fmax_MHz", "cycles", "latency_ns",
-            "LUT_delta", "latency_delta_ns"
-        ])
+        writer.writerow(
+            [
+                "Config",
+                "Implementation",
+                "LUT",
+                "DSP",
+                "fmax_MHz",
+                "cycles",
+                "latency_ns",
+                "LUT_delta",
+                "latency_delta_ns",
+            ]
+        )
 
         for label, results in all_results:
             binary = results.get("rtl_binary_adder", {})
@@ -382,30 +417,37 @@ if __name__ == "__main__":
             latency_c = compressor.get("latency_ns", 0)
 
             # Binary adder row
-            writer.writerow([
-                label, "RTL_Binary_Adder",
-                int(binary.get("LUT", 0)),
-                int(binary.get("DSP", 0)),
-                f"{fmax_b:.1f}",
-                int(binary.get("exp_cycles", 0)),
-                f"{latency_b:.2f}" if latency_b else "",
-                "", ""
-            ])
+            writer.writerow(
+                [
+                    label,
+                    "RTL_Binary_Adder",
+                    int(binary.get("LUT", 0)),
+                    int(binary.get("DSP", 0)),
+                    f"{fmax_b:.1f}",
+                    int(binary.get("exp_cycles", 0)),
+                    f"{latency_b:.2f}" if latency_b else "",
+                    "",
+                    "",
+                ]
+            )
 
             # Compressor adder row with deltas
             lut_delta = int(compressor.get("LUT", 0)) - int(binary.get("LUT", 0))
             latency_delta = latency_c - latency_b if (latency_c and latency_b) else 0
 
-            writer.writerow([
-                label, "RTL_Compressor_Adder",
-                int(compressor.get("LUT", 0)),
-                int(compressor.get("DSP", 0)),
-                f"{fmax_c:.1f}",
-                int(compressor.get("exp_cycles", 0)),
-                f"{latency_c:.2f}" if latency_c else "",
-                lut_delta,
-                f"{latency_delta:.2f}" if latency_delta else ""
-            ])
+            writer.writerow(
+                [
+                    label,
+                    "RTL_Compressor_Adder",
+                    int(compressor.get("LUT", 0)),
+                    int(compressor.get("DSP", 0)),
+                    f"{fmax_c:.1f}",
+                    int(compressor.get("exp_cycles", 0)),
+                    f"{latency_c:.2f}" if latency_c else "",
+                    lut_delta,
+                    f"{latency_delta:.2f}" if latency_delta else "",
+                ]
+            )
 
     print(f"Results saved to: {csv_path}")
 

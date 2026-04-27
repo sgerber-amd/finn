@@ -20,7 +20,6 @@ import csv
 import json
 import os
 import shutil
-
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import gen_finn_dt_tensor
@@ -41,7 +40,9 @@ from finn.compressor.benchmark_utils import (
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
 
-def run_build(model_path, output_dir, board, use_rtl, synth_only, synth_clk_period_ns, mvau_only=False):
+def run_build(
+    model_path, output_dir, board, use_rtl, synth_only, synth_clk_period_ns, mvau_only=False
+):
     """Run FINN build - either HLS or RTL with compressors.
 
     Args:
@@ -182,7 +183,20 @@ def parse_results(output_dir, mvau_only=False):
     return {}
 
 
-def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns, mvau_only=False):
+def run_comparison(
+    mw,
+    mh,
+    pe,
+    simd,
+    ww,
+    aw,
+    board,
+    work_dir,
+    synth_only,
+    timing_search,
+    synth_clk_period_ns,
+    mvau_only=False,
+):
     """Run HLS vs RTL+Compressor comparison for one config.
 
     Args:
@@ -212,12 +226,16 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
         # Run build
         output_dir = os.path.join(run_dir, "output")
         try:
-            result = run_build(model_path, output_dir, board, use_rtl, synth_only, synth_clk_period_ns, mvau_only)
+            result = run_build(
+                model_path, output_dir, board, use_rtl, synth_only, synth_clk_period_ns, mvau_only
+            )
 
             if mvau_only:
                 # Run MVAU-only synthesis (no stitched IP was created)
                 # result is a ModelWrapper in this mode
-                from finn.transformation.fpgadataflow.synth_ooc_mvau_only import SynthOutOfContextMVAUOnly
+                from finn.transformation.fpgadataflow.synth_ooc_mvau_only import (
+                    SynthOutOfContextMVAUOnly,
+                )
 
                 # board is the uppercase name (e.g. "VCK190"), need to get part from BOARD_CONFIGS
                 # Find the matching config by checking board names (case-insensitive)
@@ -231,10 +249,7 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                     part = board
 
                 model = result.transform(
-                    SynthOutOfContextMVAUOnly(
-                        part=part,
-                        clk_period_ns=synth_clk_period_ns
-                    )
+                    SynthOutOfContextMVAUOnly(part=part, clk_period_ns=synth_clk_period_ns)
                 )
 
                 # Parse results from model metadata
@@ -270,10 +285,14 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                     # mvau_only: Get from mvau metadata (stored by SynthOutOfContextMVAUOnly)
                     vivado_proj_folder = res.get("vivado_proj_folder")
                     # Top module is the bare MVAU core (not finn_design_wrapper)
-                    top_name = "mvu_vvu_axi" if use_rtl else model.graph.node[0].name  # HLS uses node name
+                    top_name = (
+                        "mvu_vvu_axi" if use_rtl else model.graph.node[0].name
+                    )  # HLS uses node name
                 else:
                     # Normal mode: Get from ooc_synth_and_timing.json
-                    synth_report_path = os.path.join(output_dir, "report", "ooc_synth_and_timing.json")
+                    synth_report_path = os.path.join(
+                        output_dir, "report", "ooc_synth_and_timing.json"
+                    )
                     if os.path.exists(synth_report_path):
                         with open(synth_report_path) as f:
                             synth_report = json.load(f)
@@ -300,18 +319,26 @@ def run_comparison(mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing
                     results[variant]["achieved_fmax_mhz"] = achieved_fmax
                     results[variant]["fmax_mhz"] = achieved_fmax
                     results[variant]["iterations"] = timing_result.get("iterations", 0)
-                    results[variant]["WNS"] = wns_at_closure  # Override initial synth WNS with timing closure WNS
+                    results[variant][
+                        "WNS"
+                    ] = wns_at_closure  # Override initial synth WNS with timing closure WNS
 
                     # Compute latency from achieved timing
                     if achieved_period > 0:
                         latency_ns = exp_cycles * achieved_period
                         results[variant]["latency_ns"] = latency_ns
-                        print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
+                        print(
+                            f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                        )
                         print(f"      Latency: {exp_cycles} cycles = {latency_ns:.2f} ns")
                     else:
-                        print(f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations")
+                        print(
+                            f"      Achieved fmax: {achieved_fmax:.1f} MHz in {timing_result['iterations']} iterations"
+                        )
                 else:
-                    print(f"      WARNING: vivado_proj_folder not found or doesn't exist: {vivado_proj_folder}")
+                    print(
+                        f"      WARNING: vivado_proj_folder not found or doesn't exist: {vivado_proj_folder}"
+                    )
 
         except Exception as e:
             print(f"    FAILED ({variant}): {e}")
@@ -324,8 +351,8 @@ def format_table(all_results):
     """Format comparison results as markdown table."""
     # Check if any result has timing search data
     has_timing = any(
-        results.get("hls", {}).get("achieved_fmax_mhz") is not None or
-        results.get("rtl_comp", {}).get("achieved_fmax_mhz") is not None
+        results.get("hls", {}).get("achieved_fmax_mhz") is not None
+        or results.get("rtl_comp", {}).get("achieved_fmax_mhz") is not None
         for _, results in all_results
     )
 
@@ -386,15 +413,26 @@ def format_table(all_results):
 
 def write_csv(all_results, csv_path):
     """Write results to CSV format (Option B: with latency)."""
-    with open(csv_path, 'w', newline='') as f:
+    with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
 
         # Header
-        writer.writerow([
-            'Config', 'Implementation',
-            'LUT', 'FF', 'DSP', 'BRAM', 'fmax_MHz', 'cycles', 'latency_ns',
-            'LUT_delta', 'latency_delta_ns', 'WNS'
-        ])
+        writer.writerow(
+            [
+                "Config",
+                "Implementation",
+                "LUT",
+                "FF",
+                "DSP",
+                "BRAM",
+                "fmax_MHz",
+                "cycles",
+                "latency_ns",
+                "LUT_delta",
+                "latency_delta_ns",
+                "WNS",
+            ]
+        )
 
         # Data rows
         for label, results in all_results:
@@ -405,50 +443,55 @@ def write_csv(all_results, csv_path):
                 continue
 
             # Use achieved_fmax if available (from timing search), otherwise use initial fmax
-            fmax_hls = hls.get('achieved_fmax_mhz') or hls.get('fmax_mhz', 0)
-            fmax_rtl = rtl.get('achieved_fmax_mhz') or rtl.get('fmax_mhz', 0)
-            latency_hls = hls.get('latency_ns', 0)
-            latency_rtl = rtl.get('latency_ns', 0)
+            fmax_hls = hls.get("achieved_fmax_mhz") or hls.get("fmax_mhz", 0)
+            fmax_rtl = rtl.get("achieved_fmax_mhz") or rtl.get("fmax_mhz", 0)
+            latency_hls = hls.get("latency_ns", 0)
+            latency_rtl = rtl.get("latency_ns", 0)
 
             # HLS row
-            wns_hls = hls.get('WNS', 0)
-            writer.writerow([
-                label, 'HLS',
-                int(hls.get('LUT', 0)),
-                int(hls.get('FF', 0)),
-                int(hls.get('DSP', 0)),
-                int(hls.get('BRAM', 0)),
-                f"{fmax_hls:.1f}",
-                int(hls.get('exp_cycles', 0)),
-                f"{latency_hls:.2f}" if latency_hls else '',
-                '', '',
-                f"{wns_hls:.3f}" if wns_hls else ''
-            ])
+            wns_hls = hls.get("WNS", 0)
+            writer.writerow(
+                [
+                    label,
+                    "HLS",
+                    int(hls.get("LUT", 0)),
+                    int(hls.get("FF", 0)),
+                    int(hls.get("DSP", 0)),
+                    int(hls.get("BRAM", 0)),
+                    f"{fmax_hls:.1f}",
+                    int(hls.get("exp_cycles", 0)),
+                    f"{latency_hls:.2f}" if latency_hls else "",
+                    "",
+                    "",
+                    f"{wns_hls:.3f}" if wns_hls else "",
+                ]
+            )
 
             # RTL row with deltas
-            lut_delta = int(rtl.get('LUT', 0)) - int(hls.get('LUT', 0))
+            lut_delta = int(rtl.get("LUT", 0)) - int(hls.get("LUT", 0))
             latency_delta = latency_rtl - latency_hls if (latency_rtl and latency_hls) else 0
-            wns_rtl = rtl.get('WNS', 0)
+            wns_rtl = rtl.get("WNS", 0)
 
-            writer.writerow([
-                label, 'RTL_Compressor',
-                int(rtl.get('LUT', 0)),
-                int(rtl.get('FF', 0)),
-                int(rtl.get('DSP', 0)),
-                int(rtl.get('BRAM', 0)),
-                f"{fmax_rtl:.1f}",
-                int(rtl.get('exp_cycles', 0)),
-                f"{latency_rtl:.2f}" if latency_rtl else '',
-                lut_delta,
-                f"{latency_delta:.2f}" if latency_delta else '',
-                f"{wns_rtl:.3f}" if wns_rtl else ''
-            ])
+            writer.writerow(
+                [
+                    label,
+                    "RTL_Compressor",
+                    int(rtl.get("LUT", 0)),
+                    int(rtl.get("FF", 0)),
+                    int(rtl.get("DSP", 0)),
+                    int(rtl.get("BRAM", 0)),
+                    f"{fmax_rtl:.1f}",
+                    int(rtl.get("exp_cycles", 0)),
+                    f"{latency_rtl:.2f}" if latency_rtl else "",
+                    lut_delta,
+                    f"{latency_delta:.2f}" if latency_delta else "",
+                    f"{wns_rtl:.3f}" if wns_rtl else "",
+                ]
+            )
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Benchmark HLS MVAU vs RTL MVAU with Compressors"
-    )
+    parser = argparse.ArgumentParser(description="Benchmark HLS MVAU vs RTL MVAU with Compressors")
     parser.add_argument("--board", choices=list(BOARD_CONFIGS.keys()), default="pynq-z1")
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--keep", action="store_true", help="Keep work directory")
@@ -488,30 +531,30 @@ def main():
     #       Configs 6-7 failed with NameError: signed_a undefined (fixed 2026-04-17)
     configs = [
         # COMPLETED 2026-04-21 run_20260421_081013:
-        #(32, 18, 1, 1, 4, 4),    # COMPLETED - Minimal parallelism (PE=1, SIMD=1)
-        #(32, 18, 1, 16, 4, 4),   # COMPLETED - SIMD only, 4-bit
-        #(32, 18, 9, 1, 4, 4),    # COMPLETED - PE only (PE=9, SIMD=1)
-        #(32, 18, 9, 16, 2, 2),   # COMPLETED - Balanced, 2-bit
-        #(32, 18, 9, 16, 4, 4),   # COMPLETED - Balanced, 4-bit
-        #(32, 18, 9, 16, 8, 8),   # COMPLETED - DSP-based reference (8-bit)
-        #(32, 18, 9, 32, 4, 4),   # COMPLETED
-        #(32, 18, 18, 16, 4, 4),  # COMPLETED
-        #(32, 18, 1, 16, 2, 2),   # COMPLETED
-        #(32, 18, 1, 32, 2, 2),   # Crashed on add_multi.sv marker issue
-        #(32, 18, 9, 32, 2, 2),   # Never ran (script stopped after crash)
-        #(32, 18, 18, 16, 2, 2),  # Never ran (script stopped after crash)
-        (32, 18, 9, 1, 2, 2),    # COMPLETED - PE only (PE=9, SIMD=1)
-
+        # (32, 18, 1, 1, 4, 4),    # COMPLETED - Minimal parallelism (PE=1, SIMD=1)
+        # (32, 18, 1, 16, 4, 4),   # COMPLETED - SIMD only, 4-bit
+        # (32, 18, 9, 1, 4, 4),    # COMPLETED - PE only (PE=9, SIMD=1)
+        # (32, 18, 9, 16, 2, 2),   # COMPLETED - Balanced, 2-bit
+        # (32, 18, 9, 16, 4, 4),   # COMPLETED - Balanced, 4-bit
+        # (32, 18, 9, 16, 8, 8),   # COMPLETED - DSP-based reference (8-bit)
+        # (32, 18, 9, 32, 4, 4),   # COMPLETED
+        # (32, 18, 18, 16, 4, 4),  # COMPLETED
+        # (32, 18, 1, 16, 2, 2),   # COMPLETED
+        # (32, 18, 1, 32, 2, 2),   # Crashed on add_multi.sv marker issue
+        # (32, 18, 9, 32, 2, 2),   # Never ran (script stopped after crash)
+        # (32, 18, 18, 16, 2, 2),  # Never ran (script stopped after crash)
+        (32, 18, 9, 1, 2, 2),  # COMPLETED - PE only (PE=9, SIMD=1)
     ]
 
     # Override with single config if specified (for parallel execution)
     if args.single_config:
-        parts = list(map(int, args.single_config.split(',')))
+        parts = list(map(int, args.single_config.split(",")))
         if len(parts) != 6:
-            raise ValueError(f"--single-config must have 6 values (mw,mh,pe,simd,ww,aw), got {len(parts)}")
+            raise ValueError(
+                f"--single-config must have 6 values (mw,mh,pe,simd,ww,aw), got {len(parts)}"
+            )
         configs = [tuple(parts)]
         print(f"Running single config: {configs[0]}")
-
 
     # Default to FINN_BUILD_DIR/hls_vs_compressor_benchmark
     if args.work_dir:
@@ -524,7 +567,9 @@ def main():
     print(f"Part: {fpga_part}")
     print(f"Target clock: {args.synth_clk_period_ns} ns ({1000/args.synth_clk_period_ns:.1f} MHz)")
     print(f"Mode: {'Synthesis only (fast)' if args.synth_only else 'Full bitfile (slow)'}")
-    print(f"Synthesis target: {'MVAU core only (no wrappers)' if args.mvau_only else 'Full stitched design (with wrappers/FIFOs)'}")
+    print(
+        f"Synthesis target: {'MVAU core only (no wrappers)' if args.mvau_only else 'Full stitched design (with wrappers/FIFOs)'}"
+    )
     print(f"Timing search: {'Enabled' if args.timing_search else 'Disabled'}")
     print(f"Configs: {len(configs)}")
     print(f"Work: {work_dir}\n")
@@ -536,8 +581,18 @@ def main():
     for i, (mw, mh, pe, simd, ww, aw) in enumerate(configs):
         print(f"[{i+1}/{len(configs)}] mw{mw}_mh{mh}_pe{pe}_simd{simd}_w{ww}_a{aw}...", flush=True)
         label, results = run_comparison(
-            mw, mh, pe, simd, ww, aw, board, work_dir, args.synth_only,
-            args.timing_search, args.synth_clk_period_ns, args.mvau_only
+            mw,
+            mh,
+            pe,
+            simd,
+            ww,
+            aw,
+            board,
+            work_dir,
+            args.synth_only,
+            args.timing_search,
+            args.synth_clk_period_ns,
+            args.mvau_only,
         )
         all_results.append((label, results))
 
