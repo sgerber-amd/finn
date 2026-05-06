@@ -86,10 +86,12 @@ for args in "${TESTS[@]}"; do
 	echo "  $label ..."
 
 	# Generate compressor
+	# Use --dotp-module-name to force generic dotp_comp name for MVU integration
 	# shellcheck disable=SC2086
 	gen_out=$(python3 -m finn.compressor.src.dotp_finn \
 		--simd "$CFG_SIMD" --ww "$CFG_WW" --aw "$CFG_AW" \
 		--accu_width "$CFG_ACCU" $CFG_SIGNED_FLAG \
+		--dotp-module-name dotp_comp \
 		--dotp-template "$FINN_SRC/finn/compressor/hdl/dotp_comp_template.sv" \
 		--dotp-output-name dotp_comp.sv \
 		-o "$gen_dir" 2>&1)
@@ -100,6 +102,10 @@ for args in "${TESTS[@]}"; do
 	comp_name=$(echo "$gen_out" | sed -n 's/^ *Module name:[[:space:]]*//p' | head -n 1)
 	comp_depth=$(echo "$gen_out" | sed -n 's/^ *Pipeline depth:[[:space:]]*//p' | head -n 1 | grep -Eo '[0-9]+' || true)
 	echo "    comp_name=$comp_name  comp_depth=$comp_depth"
+
+	# Expand mvu_vvu_axi.sv template (replace $DOTP_MODULE_NAME$ with dotp_comp)
+	sed -e 's/\$DOTP_MODULE_NAME\$/dotp_comp/g' \
+	    "$MVU_DIR/mvu_vvu_axi.sv" > "$gen_dir/mvu_vvu_axi.sv"
 
 	# Expand TB
 	sed -e "s/{mh}/$CFG_MH/g" -e "s/{mw}/$CFG_MW/g" \

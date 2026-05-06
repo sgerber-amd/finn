@@ -12,7 +12,7 @@ from itertools import count
 
 from ...utils.shape import Shape
 from ..nodes import Constant, Counter, GateAbsorptionCounter
-from ..primitives import CARRY4, LUT5, LUT6, LUT6_2, LUT6CY
+from ..primitives import CARRY4, LOOKAHEAD8, LUT5, LUT6, LUT6_2, LUT6CY
 
 MAX_CASCADE_LENGTH = 4
 
@@ -377,6 +377,12 @@ class VersalAtom2:
 
 
 class VersalAtom222:
+    """2+2+2 input counter spanning 3 columns using 2 LUTs with O52->I4 ripple.
+
+    More LUT-efficient than 3x VersalAtom2 but slower due to ripple carry.
+    Used in accumulator mode where timing is not critical.
+    """
+
     def __init__(self):
         self.shape = Shape([2, 2, 2])
         self.width = 2
@@ -395,8 +401,9 @@ class VersalAtom222:
 
 
 class VersalAtomCascade(Counter):
-    def __init__(self, atoms):
+    def __init__(self, atoms, use_lookahead8=True):
         self._atoms = atoms
+        self._use_lookahead8 = use_lookahead8
 
         in_shape = [el for atom in atoms for el in atom.shape]
         in_shape[0] += 1
@@ -406,19 +413,22 @@ class VersalAtomCascade(Counter):
         super().__init__(in_shape, out_shape)
 
     def build_hardware(self):
+        if self._use_lookahead8:
+            self._build_hardware_lookahead()
+        else:
+            self._build_hardware_ripple()
+
+    def _build_hardware_ripple(self):
+        """O52->I4 ripple carry implementation. Supports VersalAtom222. LUT-efficient but slower."""
         luts = []
         for atom in self._atoms:
-            # emit the correct luts
             luts += atom.build_luts()
 
         if not luts:
             return
 
-        # Connect inputs
         lut_idx = 0
         io_idx = 0
-
-        # Carry-in
         carry = self.input_wires[0][self._atoms[0].shape[0]]
 
         for atom in self._atoms:
@@ -439,7 +449,6 @@ class VersalAtomCascade(Counter):
                 carry.connect_to(luts[lut_idx].I4)
                 carry = luts[lut_idx].O52
 
-                # second lut
                 self.input_wires[io_idx + 1][0].connect_to(luts[lut_idx + 1].I2)
                 self.input_wires[io_idx + 1][1].connect_to(luts[lut_idx + 1].I3)
                 self.input_wires[io_idx + 2][0].connect_to(luts[lut_idx + 1].I0)
@@ -453,7 +462,6 @@ class VersalAtomCascade(Counter):
                 lut_idx += 2
                 io_idx += 3
             elif isinstance(atom, VersalAtom14):
-                # first lut
                 self.input_wires[io_idx][0].connect_to(luts[lut_idx].I0)
                 self.input_wires[io_idx][1].connect_to(luts[lut_idx].I1)
                 self.input_wires[io_idx][2].connect_to(luts[lut_idx].I2)
@@ -461,7 +469,6 @@ class VersalAtomCascade(Counter):
                 carry.connect_to(luts[lut_idx].I4)
                 carry = luts[lut_idx].O52
 
-                # second lut
                 self.input_wires[io_idx][0].connect_to(luts[lut_idx + 1].I0)
                 self.input_wires[io_idx][1].connect_to(luts[lut_idx + 1].I1)
                 self.input_wires[io_idx][2].connect_to(luts[lut_idx + 1].I2)
@@ -475,12 +482,92 @@ class VersalAtomCascade(Counter):
                 lut_idx += 2
                 io_idx += 2
             else:
-                raise Exception("Error in construction of Versal Atoms")
+                raise Exception("Unknown Versal Atom type")
+
         luts[-1].O52.connect_to(self.output_wires[-1][0])
         self.instances += luts
 
+    def _build_hardware_lookahead(self):
+        """LOOKAHEAD8 implementation: fast dedicated carry fabric. Faster but more resources."""
+        luts = []
+        for atom in self._atoms:
+            luts += atom.build_luts()
+
+        if not luts:
+            return
+
+        num_luts = len(luts)
+        l8s = [LOOKAHEAD8() for _ in range((num_luts + 7) // 8)]
+
+        # Chain LOOKAHEAD8s together
+        for prev, next_l8 in zip(l8s, l8s[1:]):
+            prev.COUTH.connect_to(next_l8.CIN)
+
+        # Connect carry-in
+        carry_in = self.input_wires[0][self._atoms[0].shape[0]]
+        carry_in.connect_to(luts[0].I4)
+        carry_in.connect_to(l8s[0].CIN)
+
+        # Connect LUTs to LOOKAHEAD8
+        for i, lut in enumerate(luts):
+            lut.PROP.connect_to(l8s[i // 8].p_in_ports[i % 8])
+            lut.O52.connect_to(l8s[i // 8].c_in_ports[i % 8 + 1])
+
+        # Carry chain: odd positions use O52, even positions use LOOKAHEAD8 output
+        for i in range(1, num_luts):
+            if i % 2 == 0:
+                l8s[(i - 1) // 8].out_ports[((i - 1) % 8) // 2].connect_to(luts[i].I4)
+            else:
+                luts[i - 1].O52.connect_to(luts[i].I4)
+
+        # Connect inputs/outputs
+        io_idx = 0
+        lut_idx = 0
+        for atom in self._atoms:
+            if isinstance(atom, VersalAtom2):
+                self.input_wires[io_idx][0].connect_to(luts[lut_idx].I0)
+                self.input_wires[io_idx][1].connect_to(luts[lut_idx].I1)
+                luts[lut_idx].O51.connect_to(self.output_wires[io_idx][0])
+                lut_idx += 1
+                io_idx += 1
+
+            elif isinstance(atom, VersalAtom14):
+                self.input_wires[io_idx][0].connect_to(luts[lut_idx].I0)
+                self.input_wires[io_idx][1].connect_to(luts[lut_idx].I1)
+                self.input_wires[io_idx][2].connect_to(luts[lut_idx].I2)
+                self.input_wires[io_idx][3].connect_to(luts[lut_idx].I3)
+                luts[lut_idx].O51.connect_to(self.output_wires[io_idx][0])
+
+                self.input_wires[io_idx][0].connect_to(luts[lut_idx + 1].I0)
+                self.input_wires[io_idx][1].connect_to(luts[lut_idx + 1].I1)
+                self.input_wires[io_idx][2].connect_to(luts[lut_idx + 1].I2)
+                self.input_wires[io_idx + 1][0].connect_to(luts[lut_idx + 1].I3)
+                luts[lut_idx + 1].O51.connect_to(self.output_wires[io_idx + 1][0])
+
+                lut_idx += 2
+                io_idx += 2
+
+            else:
+                raise Exception("Unknown Versal Atom type (LOOKAHEAD8 mode)")
+
+        # Final carry output
+        if num_luts % 2 == 0:
+            l8s[(num_luts - 1) // 8].out_ports[(num_luts - 1) % 8 // 2].connect_to(
+                self.output_wires[-1][0]
+            )
+        else:
+            luts[-1].O52.connect_to(self.output_wires[-1][0])
+
+        self.instances += luts
+        self.instances += l8s
+
 
 class VersalAtomCascadeCandidate(CounterCandidate):
+    """LOOKAHEAD8-accelerated cascade using VersalAtom2 and VersalAtom14 only.
+
+    Used for non-accumulator mode where timing is critical.
+    """
+
     def extend_to_fit(self, inputs: Shape, outputs: Shape, compression_goal) -> Counter:
         def fits_col(idx, height):
             return (
@@ -497,10 +584,6 @@ class VersalAtomCascadeCandidate(CounterCandidate):
                     atoms.append(VersalAtom14())
                     atom_idx += 2
                     io_idx += 2
-                if fits_col(io_idx, 3) and fits_col(io_idx + 1, 2) and fits_col(io_idx + 2, 2):
-                    atoms.append(VersalAtom222())
-                    atom_idx += 2
-                    io_idx += 3
                 elif fits_col(io_idx, 3):
                     atoms.append(VersalAtom2())
                     atom_idx += 1
@@ -512,7 +595,71 @@ class VersalAtomCascadeCandidate(CounterCandidate):
                     atoms.append(VersalAtom14())
                     atom_idx += 2
                     io_idx += 2
-                elif fits_col(io_idx, 2) and fits_col(io_idx + 1, 2) and fits_col(io_idx + 2, 2):
+                elif fits_col(io_idx, 2):
+                    atoms.append(VersalAtom2())
+                    atom_idx += 1
+                    io_idx += 1
+                else:
+                    break
+            elif fits_col(io_idx, 2):
+                atoms.append(VersalAtom2())
+                atom_idx += 1
+                io_idx += 1
+            else:
+                break
+        if atoms:
+            return VersalAtomCascade(atoms, use_lookahead8=True)
+
+
+class VersalAtom222CascadeCandidate(CounterCandidate):
+    """O52->I4 ripple cascade with VersalAtom222 for LUT efficiency.
+
+    Used when hw_efficient=True. LUT-efficient but slower than LOOKAHEAD8.
+    VersalAtom222 uses 2 LUTs for 3 columns (vs 3 LUTs with VersalAtom2).
+    """
+
+    def extend_to_fit(self, inputs: Shape, outputs: Shape, compression_goal) -> Counter:
+        def fits_col(idx, height):
+            return (
+                height <= inputs[idx]
+                and inputs[idx] + outputs[idx] - height + 1 - compression_goal(idx) >= -1
+            )
+
+        atoms = []
+        io_idx = 0
+        atom_idx = 0
+        while atom_idx < 4:
+            if atom_idx == 0:
+                # First position: try VersalAtom14, then VersalAtom222, then VersalAtom2
+                if fits_col(io_idx, 5) and fits_col(io_idx + 1, 1):
+                    atoms.append(VersalAtom14())
+                    atom_idx += 2
+                    io_idx += 2
+                elif (
+                    fits_col(io_idx, 3)
+                    and fits_col(io_idx + 1, 2)
+                    and fits_col(io_idx + 2, 2)
+                ):
+                    atoms.append(VersalAtom222())
+                    atom_idx += 2
+                    io_idx += 3
+                elif fits_col(io_idx, 3):
+                    atoms.append(VersalAtom2())
+                    atom_idx += 1
+                    io_idx += 1
+                else:
+                    break
+            elif atom_idx < 3:
+                # Middle positions: try VersalAtom14, then VersalAtom222, then VersalAtom2
+                if fits_col(io_idx, 4) and fits_col(io_idx + 1, 1):
+                    atoms.append(VersalAtom14())
+                    atom_idx += 2
+                    io_idx += 2
+                elif (
+                    fits_col(io_idx, 2)
+                    and fits_col(io_idx + 1, 2)
+                    and fits_col(io_idx + 2, 2)
+                ):
                     atoms.append(VersalAtom222())
                     atom_idx += 2
                     io_idx += 3
@@ -529,7 +676,7 @@ class VersalAtomCascadeCandidate(CounterCandidate):
             else:
                 break
         if atoms:
-            return VersalAtomCascade(atoms)
+            return VersalAtomCascade(atoms, use_lookahead8=False)
 
 
 class ConstantOne(GateAbsorptionCounter):
@@ -547,30 +694,12 @@ class MuxCYAtom06:
         self.output_width = 2
 
     def build_luts(self):
-        # Matches VHDL atom06.vhdl - the (0,6) atom for 6 inputs from column 0
-        #
-        # VHDL lo LUT: INIT => x"6996_9669_9669_6996"
-        #   Uses all 6 inputs x0[5:0]
-        #   O6 = O5 = XOR of all 6 bits (parity function)
-        #
-        # VHDL hi LUT: INIT => x"177E_7EE8" & x"E8E8_E8E8"
-        #   Uses x0[4:0] with I5=1
-        #   O6 = complex carry propagation
-        #   O5 = 0xE8 repeated = FA_carry(I0,I1,I2)
-        #
-        # Note: This atom is currently DISABLED in MuxCYAtomCascadeCandidate
-        # because it needs further testing. The predicates below match the
-        # VHDL reference but the wiring/integration may need work.
-        #
-        # lo LUT: XOR of all 6 bits
         lut_1 = LUT6_2.fromPred(
             lambda A0, A1, A2, A3, A4, A5: A0 ^ A1 ^ A2 ^ A3 ^ A4,  # O5 (5-input XOR)
             lambda A0, A1, A2, A3, A4, A5: A0 ^ A1 ^ A2 ^ A3 ^ A4 ^ A5,  # O6 (6-input XOR)
             "atom06_lo",
         )
-        # hi LUT: carry chain continuation
-        # O5 = FA_carry(A0,A1,A2) for the generate term
-        # O6 = more complex carry propagation (from VHDL 0x177E7EE8)
+
         lut_2 = LUT6_2.fromPred(
             lambda A0, A1, A2, A3, A4, A5: FA_carry(A0, A1, A2),  # O5 -> DI
             lambda A0, A1, A2, A3, A4, A5: (
@@ -587,27 +716,6 @@ class MuxCYAtom14:
         self.width = 2
 
     def build_luts(self):
-        # Preußer FPL 2017: (1,4) atom - matches VHDL atom14.vhdl
-        #
-        # CARRY4 primitive: CO = S ? CI : DI, O = S ^ CI
-        #
-        # The key insight from the VHDL reference:
-        #   - O6 (S) computes the propagate signal: XOR of inputs
-        #   - O5 (DI) simply passes through the higher-weight input bit
-        #
-        # This is NOT an AND of the sum/carry with the input!
-        # The VHDL uses INIT patterns:
-        #   lo: x"6996_6996" & x"FF00_FF00"  (O6=0x6996, O5=0xFF00)
-        #   hi: x"17E8_17E8" & x"FF00_FF00"  (O6=0x17E8, O5=0xFF00)
-        #
-        # O5 = 0xFF00 = just passes I3 (the 4th input bit)
-        #
-        # BUGFIX (2026-04-08): Previous implementation incorrectly used:
-        #   O5 = FA_sum(A0,A1,A2) & A3  (WRONG - produces 0xFF96)
-        # Correct implementation:
-        #   O5 = A3  (just pass through - produces 0xFF00)
-        #
-        # lut_1 (position 0): processes x0[3:0] for s0/d0
         lut_1 = LUT6_2.fromPred(
             lambda A0, A1, A2, A3, A4, _: A3,  # O5 -> DI = x0[3]
             lambda A0, A1, A2, A3, A4, _: FA_sum(A0, A1, A2) ^ A3,  # O6 -> S
@@ -629,18 +737,6 @@ class MuxCYAtom2:
         self.width = 1
 
     def build_luts(self):
-        # Matches VHDL atom22.vhdl: INIT => x"6666_6666" & x"CCCC_CCCC"
-        #
-        # CARRY4: CO = S ? CI : DI, O = S ^ CI
-        #
-        # The VHDL uses:
-        #   O6 = 0x6666 = I0 ^ I1 (XOR / half-adder sum)
-        #   O5 = 0xCCCC = I1 (just passes through the higher-weight bit)
-        #
-        # BUGFIX (2026-04-08): Previous implementation used O5=A0.
-        # While this happens to produce correct results due to CARRY4
-        # logic simplification, it doesn't match the VHDL reference.
-        # Changed to O5=A1 for consistency with atom22.vhdl.
         lut = LUT6_2.fromPred(
             lambda A0, A1, A2, A3, A4, _: A1,  # O5 -> DI = higher-weight bit
             lambda A0, A1, A2, A3, A4, _: A0 ^ A1,  # O6 -> S (propagate)

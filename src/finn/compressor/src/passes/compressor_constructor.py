@@ -55,6 +55,7 @@ class CompressorConstructor:
         constants: Tuple[bool] = tuple(),
         gates: Tuple[Tuple[str]] = tuple(),
         enable: bool = False,
+        low_latency_accu: bool = False,
     ) -> Compressor:
         compression_goal = self.get_compression_goal(final_adder, accumulate, constants)
 
@@ -99,17 +100,27 @@ class CompressorConstructor:
             pipeline_stages = 0
 
         if accumulate:
+            from ..graph.final_adder import BinaryAdder
+
             acc = AccumulatorStage(
                 c.stages[-1].output_shape,
                 final_adder,
                 pipeline_stages,
                 accumulator_width=accumulator_width,
                 enable=enable,
+                low_latency=low_latency_accu,
+                binary_adder=BinaryAdder if low_latency_accu else None,
             )
             c.stages.append(acc)
         elif max(c.stages[-1].output_shape) > 1:
             final_stage = CompressionStage()
-            final_stage.append_counter(final_adder(c.stages[-1].output_shape), 0)
+            # Try to create pipelined final adder for non-accumulator mode
+            try:
+                fa = final_adder(c.stages[-1].output_shape, pipelined=True)
+            except TypeError:
+                # Final adder doesn't support pipelining
+                fa = final_adder(c.stages[-1].output_shape)
+            final_stage.append_counter(fa, 0)
             c.stages.append(final_stage)
 
         for s_p, s_n in zip(c.stages, c.stages[1:]):

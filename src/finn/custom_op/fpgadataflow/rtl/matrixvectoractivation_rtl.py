@@ -55,6 +55,8 @@ class MVAU_rtl(MVAU, RTLBackend):
             "pumpedCompute": ("i", False, 0, {0, 1}),
             # Compressor module name (set by generate_hdl when compressor is used)
             "comp_module_name": ("s", False, ""),
+            # dotp_comp wrapper module name (set by generate_hdl when dotp compressor is used)
+            "dotp_module_name": ("s", False, ""),
             # add_multi compressor module names, semicolon-separated
             "add_multi_comp_names": ("s", False, ""),
             # add_multi compressor specs for synthesis aggregation
@@ -63,6 +65,19 @@ class MVAU_rtl(MVAU, RTLBackend):
             # Force disable LUT-based compressors (for benchmarking/comparison)
             # 0 = auto (use compressor when eligible), 1 = force disable
             "noCompressor": ("i", False, 0, {0, 1}),
+            # Compressor mode configuration (use naming: <counter>_<accu>)
+            # hwEfficient controls counter type:
+            #   -1 = use dotp_finn.py DEFAULT (lookahead)
+            #    0 = lookahead (LOOKAHEAD8 fast compression)
+            #    1 = ripple (VersalAtom222 LUT-efficient but slower compression)
+            "hwEfficient": ("i", False, -1, {-1, 0, 1}),
+            # lowLatencyAccu controls accumulator type:
+            #   -1 = use dotp_finn.py DEFAULT (lowlat)
+            #    0 = std (standard quaternary accumulator - SLOW FEEDBACK)
+            #    1 = lowlat (pipelined quad + binary adder - FAST FEEDBACK)
+            # Sensible modes: lookahead_lowlat (DEFAULT, highest Fmax), ripple_lowlat (LUT-efficient + Fmax recovery)
+            # NONSENSICAL: lookahead_std (fast compression wasted by slow feedback bottleneck)
+            "lowLatencyAccu": ("i", False, -1, {-1, 0, 1}),
         }
         my_attrs.update(MVAU.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -187,7 +202,6 @@ class MVAU_rtl(MVAU, RTLBackend):
 
         base_files = [
             "mvu_pkg.sv",
-            "mvu_vvu_axi.sv",
             "replay_buffer.sv",
             "mvu.sv",
             "mvu_vvu_8sx9_dsp58.sv",
@@ -200,12 +214,17 @@ class MVAU_rtl(MVAU, RTLBackend):
         comp_name = self.get_nodeattr("comp_module_name")
         if comp_name:
             comp_hdl_dir = os.path.join(os.environ["FINN_ROOT"], "src/finn/compressor/hdl/")
-            sourcefiles.append(os.path.join(code_gen_dir, "dotp_comp.sv"))
+            dotp_module_name = self.get_nodeattr("dotp_module_name")
+            sourcefiles.append(os.path.join(code_gen_dir, f"{dotp_module_name}.sv"))
             sourcefiles.append(os.path.join(comp_hdl_dir, "mul_comp_map.sv"))
             sourcefiles.append(os.path.join(code_gen_dir, comp_name + ".sv"))
+            # Use local mvu_vvu_axi.sv with substituted $DOTP_MODULE_NAME$
+            sourcefiles.append(os.path.join(code_gen_dir, "mvu_vvu_axi.sv"))
             # dotp_comp path doesn't need add_multi.sv
         else:
-            # DSP path: add_multi.sv always exists in code_gen_dir
+            # DSP path: use local mvu_vvu_axi.sv (placeholder substituted during generate_hdl)
+            sourcefiles.append(os.path.join(code_gen_dir, "mvu_vvu_axi.sv"))
+            # add_multi.sv always exists in code_gen_dir
             # (either patched with comps or copy of template)
             sourcefiles.append(os.path.join(code_gen_dir, "add_multi.sv"))
             add_multi_names_str = self.get_nodeattr("add_multi_comp_names")
@@ -367,25 +386,45 @@ class MVAU_rtl(MVAU, RTLBackend):
         ww = int(code_gen_dict["$WEIGHT_WIDTH$"][0])
         aw = int(code_gen_dict["$ACTIVATION_WIDTH$"][0])
         accu_width = int(code_gen_dict["$ACCU_WIDTH$"][0])
+        signed_weights = wdt.signed()
         signed_act = int(code_gen_dict["$SIGNED_ACTIVATIONS$"][0]) != 0
         pumped_compute = int(code_gen_dict["$PUMPED_COMPUTE$"][0])
         version = int(code_gen_dict["$VERSION$"][0])
 
         # Compressor generation if applicable.
         if self._is_dotp_comp_eligible(fpgapart, ww, aw, pumped_compute):
+            # Pass attribute values directly; -1 means use dotp_finn.py defaults
+            hw_eff = self.get_nodeattr("hwEfficient")
+            low_lat = self.get_nodeattr("lowLatencyAccu")
             result = generate_dotp_comp(
-                fpgapart, simd, ww, aw, accu_width, signed_act, code_gen_dir
+                fpgapart, simd, ww, aw, accu_width, signed_weights, signed_act, code_gen_dir,
+                hw_efficient=bool(hw_eff) if hw_eff >= 0 else None,
+                low_latency_accu=bool(low_lat) if low_lat >= 0 else None,
             )
             code_gen_dict["$COMP_PIPELINE_DEPTH$"] = [str(result["comp_delay"])]
             code_gen_dict["$USE_COMPRESSOR$"] = [str(1)]
+            code_gen_dict["$DOTP_MODULE_NAME$"] = [result["dotp_module_name"]]
             self.set_nodeattr("comp_module_name", result["comp_name"])
+            self.set_nodeattr("dotp_module_name", result["dotp_module_name"])
+            # Copy mvu_vvu_axi.sv and substitute $DOTP_MODULE_NAME$
+            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+            with open(os.path.join(rtllib_dir, "mvu_vvu_axi.sv"), "r") as f:
+                mvu_vvu_axi_content = f.read()
+            mvu_vvu_axi_content = mvu_vvu_axi_content.replace(
+                "$DOTP_MODULE_NAME$", result["dotp_module_name"]
+            )
+            with open(os.path.join(code_gen_dir, "mvu_vvu_axi.sv"), "w") as f:
+                f.write(mvu_vvu_axi_content)
         else:
             # DSP path: add_multi.sv handles lane reduction
             # Check if add_multi should use compressors (respects noCompressor attribute)
             if self._is_add_multi_comp_eligible(version, simd):
                 # Generate add_multi.sv with compressor optimization
+                # Pass attribute value directly; -1 means use add_multi_finn.py default
+                hw_eff = self.get_nodeattr("hwEfficient")
                 result = generate_add_multi_comps(
-                    fpgapart, version, simd, ww, aw, accu_width, narrow_weights, code_gen_dir
+                    fpgapart, version, simd, ww, aw, accu_width, narrow_weights, code_gen_dir,
+                    hw_efficient=bool(hw_eff) if hw_eff >= 0 else None,
                 )
                 if result["comp_names"]:
                     self.set_nodeattr("add_multi_comp_names", ";".join(result["comp_names"]))
@@ -400,6 +439,19 @@ class MVAU_rtl(MVAU, RTLBackend):
                     os.path.join(rtllib_dir, "add_multi.sv"),
                     os.path.join(code_gen_dir, "add_multi.sv"),
                 )
+            # Copy mvu_vvu_axi.sv and substitute $DOTP_MODULE_NAME$ with valid placeholder
+            # (USE_COMPRESSOR=0 for DSP path, so dotp_comp is never instantiated, but
+            # the syntax must be valid for Vivado's analyzer)
+            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+            with open(os.path.join(rtllib_dir, "mvu_vvu_axi.sv"), "r") as f:
+                mvu_vvu_axi_content = f.read()
+            mvu_vvu_axi_content = mvu_vvu_axi_content.replace(
+                "$DOTP_MODULE_NAME$", "dotp_comp"
+            )
+            with open(os.path.join(code_gen_dir, "mvu_vvu_axi.sv"), "w") as f:
+                f.write(mvu_vvu_axi_content)
+            # Provide default for template (not used in DSP path, but must be defined)
+            code_gen_dict["$DOTP_MODULE_NAME$"] = ["dotp_comp"]
 
         # add general parameters to dictionary
         code_gen_dict["$MODULE_NAME_AXI_WRAPPER$"] = [self.get_verilog_top_module_name()]

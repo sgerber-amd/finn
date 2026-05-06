@@ -3,25 +3,29 @@
 # Edit parameters below, then run: ./gen_dotp_netlist.sh
 
 #=== EDIT THESE PARAMETERS ===
-SIMD=96
-PE=96
-WW=5
-AW=9
-ACCU_WIDTH=26
+SIMD=128
+PE=128
+WW=2
+AW=2
+ACCU_WIDTH=11
+SIGNED_WEIGHTS=0      # 0=unsigned, 1=signed weights
 SIGNED_ACT=0          # 0=unsigned, 1=signed activations
 TARGET="Versal"       # "7-Series" or "Versal"
 PART="xcvc1902-vsvd1760-2MP-e-S"  # Vivado part for synthesis
-RUN_SYNTH=1           # 0=netlist only, 1=also run Vivado synthesis
+RUN_SYNTH=0           # 0=netlist only, 1=also run Vivado synthesis
 #=============================
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-export PYTHONPATH="$SCRIPT_DIR/../../..:$PYTHONPATH"
+# PYTHONPATH: go up to FIX/src
+export PYTHONPATH="$(cd "$SCRIPT_DIR/../../.." && pwd):${PYTHONPATH:-}"
 
 # Output directory
 LABEL="pe${PE}_simd${SIMD}_w${WW}_a${AW}"
+[ "$SIGNED_WEIGHTS" -eq 0 ] && LABEL="${LABEL}_uw"
 [ "$SIGNED_ACT" -eq 1 ] && LABEL="${LABEL}_sa"
 [ "$TARGET" = "Versal" ] && LABEL="${LABEL}_versal"
+LABEL="${LABEL}_updatedTiming"
 OUT_DIR="$SCRIPT_DIR/gen/$LABEL"
 mkdir -p "$OUT_DIR"
 
@@ -31,12 +35,13 @@ echo "  Target=$TARGET, Signed=$SIGNED_ACT"
 echo "  Output: $OUT_DIR"
 
 # Generate compressor + dotp_comp.sv
-SIGNED_FLAG=""
-[ "$SIGNED_ACT" -eq 1 ] && SIGNED_FLAG="--signed_activations"
+SIGNED_FLAGS=""
+[ "$SIGNED_WEIGHTS" -eq 0 ] && SIGNED_FLAGS="--unsigned_weights"
+[ "$SIGNED_ACT" -eq 1 ] && SIGNED_FLAGS="$SIGNED_FLAGS --signed_activations"
 
 python3 -m finn.compressor.src.dotp_finn \
     --simd "$SIMD" --ww "$WW" --aw "$AW" \
-    --accu_width "$ACCU_WIDTH" $SIGNED_FLAG \
+    --accu_width "$ACCU_WIDTH" $SIGNED_FLAGS \
     --target "$TARGET" \
     --dotp-template "$SCRIPT_DIR/hdl/dotp_comp_template.sv" \
     --dotp-output-name dotp_comp.sv \

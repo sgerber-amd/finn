@@ -8,15 +8,33 @@
 # @author    Simon Gerber <simon.gerber@amd.com>
 #############################################################################
 
-# Run dotp_comp integration tests for multiple configurations.
+# Run dotp_comp integration tests for multiple configurations and modes.
 # Uses dotp_finn.py to generate the compressor core (comp.sv),
 # then instantiates it from the static dotp_comp template via XSim.
 #
-# Usage: ./run_dotp_comp_tests.sh [versal|7series]
+# Mode naming: <counter_type>_<accu_type>
+#   lookahead_std     - LOOKAHEAD8 + standard accu (BASELINE/DEFAULT, recommended)
+#   lookahead_lowlat  - LOOKAHEAD8 + low-latency accu (NOT RECOMMENDED: adds latency for no Fmax benefit)
+#   ripple_std        - VersalAtom222 + standard accu (LUT-efficient)
+#   ripple_lowlat     - VersalAtom222 + low-latency accu (LUT-efficient + Fmax recovery, recommended)
+#
+# Usage: ./run_dotp_comp_tests.sh [mode] [target]
+#   mode: "lookahead_std", "lookahead_lowlat", "ripple_std", "ripple_lowlat", or "all" (default: all)
+#   target: versal, 7series, ultrascale (default: versal)
 
 ((${KEEP_LOG:=0}))
 ((${MAX_WORKERS:=12}))
-TARGET="${1:-versal}"  # Default to versal
+
+# Parse mode and target arguments
+MODE_ARG="${1:-all}"
+TARGET="${2:-versal}"
+
+# Define modes to test (standardized naming)
+if [[ "$MODE_ARG" == "all" ]]; then
+	MODES=("lookahead_std" "lookahead_lowlat" "ripple_std" "ripple_lowlat")
+else
+	MODES=("$MODE_ARG")
+fi
 
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 FINN_SRC="$(cd "$SRC_DIR/../.." && pwd)"
@@ -31,6 +49,7 @@ fi
 echo "Vivado: $(command -v vivado)"
 echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS WORK_DIR=$WORK_DIR"
 echo "Target: $TARGET"
+echo "Modes: ${MODES[*]}"
 
 source "$SRC_DIR/lib/test_common.sh"
 
@@ -48,7 +67,8 @@ TESTS=(
 )
 
 function parse_config {
-	local pe="" simd="" ww="" aw="" accu="" signed_act=""
+	local pe="" simd="" ww="" aw="" accu="" signed_act="" mode="$1"
+	shift
 	CFG_SIGNED_FLAG=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -63,8 +83,15 @@ function parse_config {
 	done
 	CFG_PE="$pe"; CFG_SIMD="$simd"; CFG_WW="$ww"; CFG_AW="$aw"; CFG_ACCU="$accu"
 	CFG_LABEL="pe${pe}_simd${simd}_ww${ww}_aw${aw}_accu${accu}${signed_act}"
+	[ -n "$mode" ] && CFG_LABEL="${CFG_LABEL}_${mode}"
 	# Sanitize label for SystemVerilog identifiers
 	CFG_LABEL="${CFG_LABEL//-/_}"
+
+	# Build mode flags (parse standardized naming)
+	CFG_MODE_FLAGS=""
+	[[ "$mode" == *"ripple"* ]] && CFG_MODE_FLAGS="$CFG_MODE_FLAGS --hw-efficient"
+	[[ "$mode" == *"lowlat"* ]] && CFG_MODE_FLAGS="$CFG_MODE_FLAGS --low-latency-accu"
+
 	# Set FPGA part and target flag based on TARGET variable
 	if [[ "$TARGET" == "7series" ]]; then
 		CFG_PART="xc7z020clg400-1"  # Pynq-Z1
@@ -93,10 +120,11 @@ function run_sim {
 # Phase 1: Generate
 LABELS=()
 echo -e "Generating configs:\n"
-for args in "${TESTS[@]}"; do
+for mode in "${MODES[@]}"; do
+  for args in "${TESTS[@]}"; do
 	CFG_SIGNED_FLAG=""
 	# shellcheck disable=SC2086
-	parse_config $args
+	parse_config "$mode" $args
 	label="$CFG_LABEL"
 	LABELS+=("$label")
 	out_dir="gen/$label"
@@ -109,6 +137,7 @@ for args in "${TESTS[@]}"; do
 	gen_out=$(python3 -m finn.compressor.src.dotp_finn \
 		--simd "$CFG_SIMD" --ww "$CFG_WW" --aw "$CFG_AW" \
 		--accu_width "$CFG_ACCU" $CFG_SIGNED_FLAG $CFG_TARGET_FLAG \
+		$CFG_MODE_FLAGS \
 		--dotp-template hdl/dotp_comp_template.sv \
 		--dotp-output-name dotp_comp.sv \
 		-o "$out_dir" 2>&1)
@@ -119,17 +148,23 @@ for args in "${TESTS[@]}"; do
 	comp_depth=$(echo "$gen_out" | sed -n 's/^ *Pipeline depth:[[:space:]]*//p' | head -n 1 | grep -Eo '[0-9]+' || true)
 	[ -z "$comp_depth" ] && { echo "ERROR: No depth for $label" >&2; exit 1; }
 
+	# Extract dotp module name from generated file
+	dotp_module=$(grep "^module" "$out_dir/dotp_comp.sv" | sed 's/module \([^ #]*\).*/\1/')
+	[ -z "$dotp_module" ] && { echo "ERROR: No dotp module name for $label" >&2; exit 1; }
+
 	# Expand TB
 	sed -e "s/{pe}/$CFG_PE/g" -e "s/{simd}/$CFG_SIMD/g" \
 	    -e "s/{ww}/$CFG_WW/g" -e "s/{aw}/$CFG_AW/g" \
 	    -e "s/{accu_width}/$CFG_ACCU/g" \
 	    -e "s/{signed_act}/$([ -n "$CFG_SIGNED_FLAG" ] && echo 1 || echo 0)/g" \
 	    -e "s/{full_sig}/$label/g" -e "s/{comp_depth}/$comp_depth/g" \
+	    -e "s/{dotp_module}/$dotp_module/g" \
 	    hdl/dotp_comp_tb_template.sv > "$out_dir/dotp_comp_${label}_tb.sv"
 
 	# Expand TCL
 	sed -e "s/{label}/$label/g" -e "s|{src_dir}|$SRC_DIR|g" -e "s/{part}/$CFG_PART/g" \
 	    hdl/dotp_comp_template.tcl > "$out_dir/dotp_comp_${label}.tcl"
+  done
 done
 echo
 

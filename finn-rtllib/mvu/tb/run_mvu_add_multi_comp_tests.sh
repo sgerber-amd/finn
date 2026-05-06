@@ -114,6 +114,10 @@ for args in "${TESTS[@]}"; do
 		cp "$MVU_DIR/add_multi.sv" "$gen_dir/add_multi.sv"
 	fi
 
+	# Expand mvu_vvu_axi.sv template (replace $DOTP_MODULE_NAME$ with dotp_comp)
+	sed -e 's/\$DOTP_MODULE_NAME\$/dotp_comp/g' \
+	    "$MVU_DIR/mvu_vvu_axi.sv" > "$gen_dir/mvu_vvu_axi.sv"
+
 	# Expand TB
 	sed -e "s/{mh}/$CFG_MH/g" -e "s/{mw}/$CFG_MW/g" \
 	    -e "s/{pe}/$CFG_PE/g" -e "s/{simd}/$CFG_SIMD/g" \

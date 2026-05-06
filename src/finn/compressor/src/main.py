@@ -63,7 +63,24 @@ def parse_cli():
     parser.add_argument(
         "-c", "--constant", default=[], help="Add a constant binary " "number input. Example: 1011"
     )
+    parser.add_argument(
+        "--low-latency-accu",
+        action="store_true",
+        help="Use low-latency accumulator (pipelined quad + binary adder). "
+        "Faster Fmax, +1 cycle latency.",
+    )
+    parser.add_argument(
+        "--hw-efficient",
+        action="store_true",
+        help="Use LUT-efficient VersalAtom222 cascade (O52->I4 ripple carry). "
+        "Fewer LUTs but slower than LOOKAHEAD8. Versal only, requires --accumulate.",
+    )
     args = parser.parse_args()
+
+    # Validate flag combinations
+    if args.hw_efficient:
+        if args.target != "Versal":
+            parser.error("--hw-efficient is only supported on Versal (VersalAtom222 primitive)")
 
     try:
         shape = Shape(int(el) for el in args.shape.split(","))
@@ -108,6 +125,8 @@ def parse_cli():
         constants,
         args.output,
         args.test,
+        low_latency_accu=args.low_latency_accu,
+        hw_efficient=args.hw_efficient,
     )
 
 
@@ -123,11 +142,30 @@ def generate_compressor(
     path: str,
     test: bool,
     enable: bool = False,
+    low_latency_accu: bool = False,
+    hw_efficient: bool = False,
 ):
     start_time = time.time()
     constructor = CompressorConstructor()
+
+    # Select counter candidates based on hw_efficient flag:
+    # - hw_efficient=True:  VersalAtom222 cascade (O52->I4 ripple, LUT-efficient)
+    # - hw_efficient=False: VersalAtomCascade with LOOKAHEAD8 (fast carry)
+    #
+    # The low_latency_accu flag is orthogonal and controls accumulator pipelining.
+    print(f"DEBUG main.py: hw_efficient={hw_efficient}")
+    if hw_efficient:
+        # Validation: hw_efficient requires Versal target
+        if not hasattr(target, "counter_candidates_accumulator"):
+            raise ValueError("--hw-efficient requires Versal target with counter_candidates_accumulator")
+        counter_candidates = target.counter_candidates_accumulator
+        print(f"DEBUG: Using VersalAtom222 path (counter_candidates_accumulator)")
+    else:
+        counter_candidates = target.counter_candidates
+        print(f"DEBUG: Using LOOKAHEAD8 path (counter_candidates)")
+
     c = constructor(
-        target.counter_candidates,
+        counter_candidates,
         target.absorbing_counter_candidates,
         target.final_adder,
         shape,
@@ -138,6 +176,7 @@ def generate_compressor(
         constants=constants,
         gates=gates,
         enable=enable,
+        low_latency_accu=low_latency_accu,
     )
 
     placer = LUTPlacer()

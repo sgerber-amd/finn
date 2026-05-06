@@ -216,8 +216,8 @@ def run_comparison(
 
     results = {}
 
-    # Run RTL only (use benchmark_hls_vs_compressor_hls.py for HLS-only)
-    for use_rtl in [True]:  # True=RTL
+    # Run HLS only
+    for use_rtl in [False]:  # False=HLS
         variant = "rtl_comp" if use_rtl else "hls"
         run_dir = os.path.join(work_dir, f"{label}_{variant}")
         os.makedirs(run_dir, exist_ok=True)

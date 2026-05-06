@@ -32,6 +32,43 @@ from .target import resolve_target, resolve_target_name
 from .utils.mul_comp_map import MulCompMap
 from .utils.shape import Shape
 
+# ---------------------------------------------------------------------------
+# Default compressor mode settings (edit here for testing)
+# These are used when the caller doesn't explicitly set the flags.
+#
+# Mode naming convention: <counter_type>_<accu_type>
+#   lookahead_std     - LOOKAHEAD8 + standard accu (NONSENSICAL: fast compression wasted by slow feedback)
+#   lookahead_lowlat  - LOOKAHEAD8 + low-latency accu (SENSIBLE: fast compression + fast feedback, highest Fmax)
+#   ripple_std        - VersalAtom222 + standard accu (SENSIBLE: LUT-efficient, accepts slower Fmax)
+#   ripple_lowlat     - VersalAtom222 + low-latency accu (SENSIBLE: LUT-efficient + Fmax recovery, RECOMMENDED)
+#
+# Accumulator architectures:
+#   std (standard):
+#     Single QuaternaryAdder handles compression + accumulation with direct feedback.
+#     Feedback path includes full QuaternaryAdder complexity → SLOW FEEDBACK.
+#     Latency: +1 cycle.
+#
+#   lowlat (low-latency):
+#     Pipelined QuaternaryAdder (compression only) + BinaryAdder (accumulation with feedback).
+#     Feedback path is simple 2-input BinaryAdder → FAST FEEDBACK.
+#     Latency: +2 cycles.
+#
+# Why lookahead_std is NONSENSICAL:
+#   LOOKAHEAD8 makes compression fast, but standard accumulator puts complex QuaternaryAdder
+#   in feedback loop → feedback becomes the bottleneck, wasting the fast compression.
+#
+# Why lookahead_lowlat DOES make sense:
+#   Fast compression (LOOKAHEAD8) + fast feedback (BinaryAdder) → highest possible Fmax.
+#   Pays +1 cycle latency to achieve maximum performance.
+#
+# Why ripple_lowlat is RECOMMENDED:
+#   VersalAtom222 saves 33% LUTs but has slow ripple carry. Low-latency accumulator isolates
+#   the slow compression from feedback → recovers Fmax while keeping LUT savings.
+#
+# ---------------------------------------------------------------------------
+DEFAULT_HW_EFFICIENT = False      # False = lookahead (LOOKAHEAD8 fast carry)
+DEFAULT_LOW_LATENCY_ACCU = True   # True = lowlat (fast BinaryAdder feedback, DEFAULT)
+
 
 def expand_template(template_path, output_path, substitutions):
     """Expand a text template by replacing $PLACEHOLDER$ tokens.
@@ -56,10 +93,9 @@ def expand_template(template_path, output_path, substitutions):
         f.write(text)
 
 
-def compute_params(simd, weight_width, activation_width, signed_activations):
+def compute_params(simd, weight_width, activation_width, signed_weights, signed_activations):
     """Map finn parameters to compressor parameters, respecting NA >= NB."""
-    # Weights are always signed in finn
-    sa_finn = True
+    sa_finn = signed_weights
     sb_finn = signed_activations
 
     # mul_comp_map requires NA >= NB. Swap operands if needed.
@@ -87,7 +123,18 @@ def comp_module_name(n, sa, na, sb, nb, accu_width):
 
 
 def generate_comp_module(
-    target, n, na, nb, sa, sb, accu_width, pipeline_every, output_dir, name=None
+    target,
+    n,
+    na,
+    nb,
+    sa,
+    sb,
+    accu_width,
+    pipeline_every,
+    output_dir,
+    name=None,
+    hw_efficient=False,
+    low_latency_accu=False,
 ):
     """Generate the compressor core with fused accumulation.
 
@@ -126,11 +173,16 @@ def generate_comp_module(
         path=comp_path,
         test=False,
         enable=True,
+        hw_efficient=hw_efficient,
+        low_latency_accu=low_latency_accu,
     )
     return name, comp_path, delay
 
 
-def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_dir):
+def generate_dotp_comp(
+    fpgapart, simd, ww, aw, accu_width, signed_weights, signed_act, output_dir,
+    hw_efficient=None, low_latency_accu=None
+):
     """
     Generate the dotp_comp path: compressor core + expanded template.
 
@@ -142,10 +194,16 @@ def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_di
         FPGA part string (e.g. "xcvc1902-...").
     simd, ww, aw, accu_width : int
         MVU parameters.
+    signed_weights : bool
+        Whether weights are signed.
     signed_act : bool
         Whether activations are signed.
     output_dir : str
         Directory for generated files (= code_gen_dir).
+    hw_efficient : bool, optional
+        Use LUT-efficient VersalAtom222 cascade (O52->I4 ripple).
+    low_latency_accu : bool, optional
+        Use low-latency accumulator (pipelined quad + binary adder).
 
     Returns
     -------
@@ -154,9 +212,14 @@ def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_di
         comp_delay : int   — pipeline depth
         files      : list  — paths of all generated files
     """
+    # Use module-level defaults if caller didn't specify
+    if hw_efficient is None:
+        hw_efficient = DEFAULT_HW_EFFICIENT
+    if low_latency_accu is None:
+        low_latency_accu = DEFAULT_LOW_LATENCY_ACCU
 
     target = resolve_target(fpgapart)
-    n, na, nb, sa, sb, _ = compute_params(simd, ww, aw, signed_act)
+    n, na, nb, sa, sb, _ = compute_params(simd, ww, aw, signed_weights, signed_act)
 
     comp_name, comp_path, comp_delay = generate_comp_module(
         target,
@@ -168,17 +231,22 @@ def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_di
         accu_width,
         pipeline_every=1,  # Max pipelining
         output_dir=output_dir,
+        hw_efficient=hw_efficient,
+        low_latency_accu=low_latency_accu,
     )
 
     # Expand dotp_comp template with the generated module name
+    # Use config-specific module name to avoid collisions in multi-MVAU builds
     src_dir = os.path.dirname(os.path.abspath(__file__))
     compressor_root = os.path.abspath(os.path.join(src_dir, ".."))
     dotp_comp_template = os.path.join(compressor_root, "hdl", "dotp_comp_template.sv")
-    dotp_comp_path = os.path.join(output_dir, "dotp_comp.sv")
+    dotp_module_name = f"dotp_{comp_name}"
+    dotp_comp_path = os.path.join(output_dir, f"{dotp_module_name}.sv")
     expand_template(
         dotp_comp_template,
         dotp_comp_path,
         {
+            "$DOTP_MODULE_NAME$": dotp_module_name,
             "$COMP_MODULE_NAME$": comp_name,
             "$EXPECTED_SIMD$": str(simd),
             "$EXPECTED_NA$": str(na),
@@ -191,6 +259,7 @@ def generate_dotp_comp(fpgapart, simd, ww, aw, accu_width, signed_act, output_di
 
     return {
         "comp_name": comp_name,
+        "dotp_module_name": dotp_module_name,
         "comp_delay": comp_delay,
         "files": [dotp_comp_path, comp_path],
     }
@@ -208,6 +277,8 @@ def main():
     parser.add_argument("--ww", type=int, required=True, help="Weight bit width")
     parser.add_argument("--aw", type=int, required=True, help="Activation bit width")
     parser.add_argument("--accu_width", type=int, required=True, help="Accumulator bit width")
+    parser.add_argument("--signed_weights", action="store_true", default=True, help="Weights are signed (default: True)")
+    parser.add_argument("--unsigned_weights", dest="signed_weights", action="store_false", help="Weights are unsigned")
     parser.add_argument("--signed_activations", action="store_true", help="Activations are signed")
     parser.add_argument(
         "-t",
@@ -240,7 +311,22 @@ def main():
         help="Output file name for expanded dotp_comp template",
     )
     parser.add_argument(
+        "--dotp-module-name",
+        default=None,
+        help="dotp wrapper module name override (default: dotp_<comp_name>)",
+    )
+    parser.add_argument(
         "--skip-dotp-template", action="store_true", help="Skip expanding dotp_comp template"
+    )
+    parser.add_argument(
+        "--hw-efficient",
+        action="store_true",
+        help="Use LUT-efficient VersalAtom222 cascade (requires Versal target)",
+    )
+    parser.add_argument(
+        "--low-latency-accu",
+        action="store_true",
+        help="Use low-latency accumulator (pipelined quad + binary adder)",
     )
     args = parser.parse_args()
     target = resolve_target_name(args.target)
@@ -248,7 +334,7 @@ def main():
 
     # Compute compressor parameters
     n, na, nb, sa, sb, swapped = compute_params(
-        args.simd, args.ww, args.aw, args.signed_activations
+        args.simd, args.ww, args.aw, args.signed_weights, args.signed_activations
     )
 
     # Generate the compressor core with fused accumulation
@@ -263,6 +349,8 @@ def main():
         args.pipeline_every,
         args.output_dir,
         name=args.name,
+        hw_efficient=args.hw_efficient,
+        low_latency_accu=args.low_latency_accu,
     )
 
     dotp_path = None
@@ -273,11 +361,13 @@ def main():
                 f"dotp template not found: {template_path}. "
                 f"Use --dotp-template or --skip-dotp-template."
             )
+        dotp_module_name = args.dotp_module_name if args.dotp_module_name else f"dotp_{comp_name}"
         dotp_path = os.path.join(args.output_dir, args.dotp_output_name)
         expand_template(
             template_path,
             dotp_path,
             {
+                "$DOTP_MODULE_NAME$": dotp_module_name,
                 "$COMP_MODULE_NAME$": comp_name,
                 "$EXPECTED_SIMD$": str(args.simd),
                 "$EXPECTED_NA$": str(na),

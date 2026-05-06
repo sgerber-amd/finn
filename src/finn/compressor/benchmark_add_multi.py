@@ -37,7 +37,8 @@ from finn.compressor.benchmark_utils import (
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
 
-def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_period_ns, pe, simd):
+def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_period_ns, pe, simd,
+              hw_efficient=False, low_latency_accu=False):
     """Run FINN build for RTL MVAU with or without add_multi compressors."""
     os.makedirs(output_dir, exist_ok=True)
 
@@ -59,6 +60,8 @@ def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_pe
             "resType": ["dsp", ["MVAU_rtl"]],  # Force DSP path (8-bit needs DSPs)
             "mem_mode": ["internal_decoupled", ["MVAU_rtl"]],  # Include MVAU in synthesis
             "noCompressor": [1 if not use_compressor else 0, ["MVAU_rtl"]],
+            "hwEfficient": [1 if hw_efficient else 0, ["MVAU_rtl"]],
+            "lowLatencyAccu": [1 if low_latency_accu else 0, ["MVAU_rtl"]],
         }
     }
     folding_config_path = os.path.join(output_dir, "folding_config.json")
@@ -129,7 +132,8 @@ def run_build(model, output_dir, board, use_compressor, synth_only, synth_clk_pe
 
 
 def run_comparison(
-    mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns
+    mw, mh, pe, simd, ww, aw, board, work_dir, synth_only, timing_search, synth_clk_period_ns,
+    hw_efficient=False, low_latency_accu=False
 ):
     """Run both RTL variants (with and without add_multi compressor) and compare."""
     label = format_config_label(mw, mh, pe, simd, ww, aw)
@@ -166,6 +170,8 @@ def run_comparison(
                 synth_clk_period_ns,
                 pe,
                 simd,
+                hw_efficient=hw_efficient,
+                low_latency_accu=low_latency_accu,
             )
 
             if synth_result:
@@ -317,6 +323,17 @@ if __name__ == "__main__":
     )
     parser.add_argument("--work-dir", type=str, help="Work directory for builds")
     parser.add_argument("--keep", action="store_true", help="Keep intermediate files")
+    parser.add_argument(
+        "--hw-efficient",
+        action="store_true",
+        help="Counter type: ripple (VersalAtom222 LUT-efficient carry) instead of lookahead (LOOKAHEAD8 fast carry)",
+    )
+    parser.add_argument(
+        "--low-latency-accu",
+        action="store_true",
+        help="Accumulator type: lowlat (pipelined quad + binary) instead of std (standard quaternary). "
+             "NOT RECOMMENDED with --hw-efficient=False (lookahead_lowlat adds latency for no benefit)",
+    )
 
     args = parser.parse_args()
 
@@ -324,27 +341,25 @@ if __name__ == "__main__":
     board = board_config["board"]
     fpga_part = board_config["part"]
 
-    # Test configurations - 8-bit operands on 7-Series/UltraScale+, 10-bit on Versal
-    # 7-Series/UltraScale+: W8/A8 uses standard mvu.sv with add_multi (no genINT8)
-    # Versal: W10/A10 bypasses genINT8 (which requires W<=8 AND A<=9),
-    # forces genSoftVec with add_multi
+    # Test configurations for add_multi compressor benchmarking
     # add_multi compressors only activate when SIMD >= 4
-
-    # Determine bit-widths based on board
-    if args.board.lower() == "vck190":
-        # Versal: Use W10/A10 to bypass genINT8 and force add_multi path
-        ww, aw = 10, 10
-    else:
-        # 7-Series/UltraScale+: Use W8/A8 (no genINT8 on these platforms)
-        ww, aw = 8, 8
+    # Using 10-bit and 12-bit operands (bypasses genINT8, forces genSoftVec with add_multi)
 
     configs = [
         # (MW, MH, PE, SIMD, WW, AW)
-        (16, 16, 2, 2, ww, aw),  # SIMD<4: binary tree baseline
-        (32, 18, 9, 4, ww, aw),  # SIMD=4: minimal compressor
-        (32, 18, 9, 8, ww, aw),  # SIMD=8: common config
-        (32, 18, 9, 16, ww, aw),  # SIMD=16: higher fanin
-        (32, 18, 9, 32, ww, aw),  # SIMD=32: maximum fanin
+        # Group 1: SIMD sweep @ 10-bit, PE=9
+        (32, 18, 9, 4, 10, 10),
+        (32, 18, 9, 8, 10, 10),
+        (32, 18, 9, 16, 10, 10),
+        (32, 18, 9, 32, 10, 10),
+        # Group 2: SIMD sweep @ 12-bit, PE=9
+        (32, 18, 9, 4, 12, 12),
+        (32, 18, 9, 8, 12, 12),
+        (32, 18, 9, 16, 12, 12),
+        (32, 18, 9, 32, 12, 12),
+        # Group 3: PE=3 @ SIMD=8 (both bit widths)
+        (32, 18, 3, 8, 10, 10),
+        (32, 18, 3, 8, 12, 12),
     ]
 
     # Default work directory
@@ -354,6 +369,11 @@ if __name__ == "__main__":
         finn_build_dir = os.environ.get("FINN_BUILD_DIR", "/tmp")
         work_dir = os.path.join(finn_build_dir, "add_multi_benchmark")
 
+    # Mode label for output (standardized naming)
+    counter_type = "ripple" if args.hw_efficient else "lookahead"
+    accu_type = "lowlat" if args.low_latency_accu else "std"
+    mode_label = f"_{counter_type}_{accu_type}"
+
     print("=" * 80)
     print("add_multi Compressor Benchmark")
     print("=" * 80)
@@ -362,6 +382,25 @@ if __name__ == "__main__":
     print(f"Target clock: {args.synth_clk_period_ns} ns ({1000/args.synth_clk_period_ns:.1f} MHz)")
     print(f"Mode: {'Synthesis only' if args.synth_only else 'Full bitfile'}")
     print(f"Timing search: {'Enabled' if args.timing_search else 'Disabled'}")
+
+    # Display mode with recommendations
+    mode_name = f"{counter_type}_{accu_type}"
+    hw_desc = "ripple (VersalAtom222, LUT-efficient)" if args.hw_efficient else "lookahead (LOOKAHEAD8, fast)"
+    ll_desc = "lowlat (pipelined quad + binary)" if args.low_latency_accu else "std (standard quaternary)"
+
+    print(f"Counter type: {hw_desc}")
+    print(f"Accumulator type: {ll_desc}")
+    print(f"Mode: {mode_name}", end="")
+
+    if mode_name == "lookahead_lowlat":
+        print(" [NOT RECOMMENDED: adds latency with no Fmax benefit over lookahead_std]")
+    elif mode_name == "lookahead_std":
+        print(" [BASELINE/DEFAULT]")
+    elif mode_name == "ripple_lowlat":
+        print(" [RECOMMENDED for LUT-efficiency: combines LUT savings with Fmax recovery]")
+    else:
+        print()
+
     print(f"Configs: {len(configs)}")
     print(f"Work: {work_dir}\n")
 
@@ -380,6 +419,8 @@ if __name__ == "__main__":
             args.synth_only,
             args.timing_search,
             args.synth_clk_period_ns,
+            hw_efficient=args.hw_efficient,
+            low_latency_accu=args.low_latency_accu,
         )
         all_results.append((label, results))
 

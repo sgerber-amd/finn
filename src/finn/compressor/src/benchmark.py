@@ -47,14 +47,21 @@ def benchmark():
     for example_name, example_shape in examples.items():
         target = Versal()
         constructor = CompressorConstructor()
+        accumulate = True
+        # Use LUT-efficient candidates for accumulator mode
+        counter_candidates = (
+            target.counter_candidates_accumulator
+            if accumulate
+            else target.counter_candidates
+        )
         comp = constructor(
-            target.counter_candidates,
+            counter_candidates,
             target.absorbing_counter_candidates,
             target.final_adder,
             example_shape,
             "comp",
             1,
-            True,
+            accumulate,
             None,
             tuple(),
             [],

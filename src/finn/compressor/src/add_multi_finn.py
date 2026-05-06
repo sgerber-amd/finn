@@ -45,6 +45,16 @@ from .target import resolve_target, resolve_target_name
 from .utils.shape import Shape
 
 # ---------------------------------------------------------------------------
+# Default compressor mode settings (edit here for testing)
+# These are used when the caller doesn't explicitly set the flags.
+# ---------------------------------------------------------------------------
+DEFAULT_HW_EFFICIENT = False      # False = LOOKAHEAD8 (timing-optimized)
+# Note: low_latency_accu only applies to accumulators. add_multi doesn't use
+# accumulation (accumulate=False), so this flag has no effect here. It's kept
+# for API consistency but should always be False for add_multi.
+DEFAULT_LOW_LATENCY_ACCU = False
+
+# ---------------------------------------------------------------------------
 # Python replica of mvu.sv::sliceLanes()
 #
 # This must mirror the SV implementation exactly. Any change to sliceLanes()
@@ -141,7 +151,9 @@ def comp_module_name(n, arg_width, delay):
     return f"comp_{n}u{arg_width}_d{delay}"
 
 
-def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir, name=None):
+def generate_add_multi_comp(
+    target, n, arg_width, pipeline_every, output_dir, name=None, hw_efficient=False, low_latency_accu=False
+):
     """
     Generate a multi-input adder compressor (no accumulation).
 
@@ -190,6 +202,8 @@ def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir, na
         path=tmp_path,
         test=False,
         enable=False,  # No accumulator registers to initialize
+        hw_efficient=hw_efficient,
+        low_latency_accu=low_latency_accu,
     )
 
     # Derive final name with delay suffix
@@ -213,7 +227,8 @@ def generate_add_multi_comp(target, n, arg_width, pipeline_every, output_dir, na
 
 
 def generate_add_multi_comps(
-    fpgapart, version, simd, ww, aw, accu_width, narrow_weights, output_dir
+    fpgapart, version, simd, ww, aw, accu_width, narrow_weights, output_dir,
+    hw_efficient=None, low_latency_accu=None
 ):
     """
     Generate add_multi compressor cores and patch add_multi.sv.
@@ -233,6 +248,10 @@ def generate_add_multi_comps(
         NARROW_WEIGHTS flag (0 or 1).
     output_dir : str
         Directory for generated files (= code_gen_dir).
+    hw_efficient : bool
+        Use LUT-efficient VersalAtom222 cascade (O52->I4 ripple).
+    low_latency_accu : bool
+        Use low-latency accumulator (pipelined quad + binary adder).
 
     Returns
     -------
@@ -240,6 +259,11 @@ def generate_add_multi_comps(
         comp_names : list[str] — generated module names (empty if ineligible)
         files      : list[str] — paths of all generated/patched files
     """
+    # Use module-level defaults if caller didn't specify
+    if hw_efficient is None:
+        hw_efficient = DEFAULT_HW_EFFICIENT
+    if low_latency_accu is None:
+        low_latency_accu = DEFAULT_LOW_LATENCY_ACCU
 
     rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
     patched_path = os.path.join(output_dir, "add_multi.sv")
@@ -265,6 +289,8 @@ def generate_add_multi_comps(
                 w,
                 pipeline_every=1,  # Max pipelining (match dotp_comp behavior)
                 output_dir=output_dir,
+                hw_efficient=hw_efficient,
+                low_latency_accu=low_latency_accu,
             )
             generated[key] = (name, delay)
 
@@ -351,6 +377,16 @@ def main():
     mvu_group.add_argument(
         "--narrow_weights", type=int, default=0, choices=[0, 1], help="NARROW_WEIGHTS flag (0 or 1)"
     )
+    parser.add_argument(
+        "--hw-efficient",
+        action="store_true",
+        help="Use LUT-efficient VersalAtom222 cascade (requires Versal target)",
+    )
+    parser.add_argument(
+        "--low-latency-accu",
+        action="store_true",
+        help="Use low-latency accumulator (pipelined quad + binary adder)",
+    )
 
     args = parser.parse_args()
 
@@ -404,7 +440,14 @@ def main():
             seen.add((simd, w))
 
             comp_name, comp_path, comp_delay = generate_add_multi_comp(
-                target, simd, w, args.pipeline_every, args.output_dir, name=args.name
+                target,
+                simd,
+                w,
+                args.pipeline_every,
+                args.output_dir,
+                name=args.name,
+                hw_efficient=args.hw_efficient,
+                low_latency_accu=args.low_latency_accu,
             )
             print(f"  Lane {lane}: lo_width={w}")
             print(f"    Generated: {comp_path}")
@@ -414,7 +457,14 @@ def main():
     else:
         # Direct mode: single compressor for explicit arg_width
         comp_name, comp_path, comp_delay = generate_add_multi_comp(
-            target, args.n, args.arg_width, args.pipeline_every, args.output_dir, name=args.name
+            target,
+            args.n,
+            args.arg_width,
+            args.pipeline_every,
+            args.output_dir,
+            name=args.name,
+            hw_efficient=args.hw_efficient,
+            low_latency_accu=args.low_latency_accu,
         )
 
         print(f"Generated compressor core: {comp_path}")

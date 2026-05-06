@@ -371,6 +371,23 @@ while {{[expr $ts - $tm] > 0.1}} {{
         set best_passing_period $ts
         set best_passing_wns $wns
         puts "INFO: Timing PASSED, decreasing period"
+
+        # Save reports from best passing iteration
+        file mkdir best_passing_reports
+        open_run impl_1
+        report_timing_summary -file best_passing_reports/timing_summary.rpt
+        report_timing -max_paths 10 -file best_passing_reports/timing_paths.rpt
+        report_utilization -file best_passing_reports/utilization.rpt
+        close_design
+
+        # Also save the period info
+        set fp [open "best_passing_reports/info.txt" w]
+        puts $fp "period_ns=$ts"
+        puts $fp "fmax_mhz=[expr 1000.0 / $ts]"
+        puts $fp "wns=$wns"
+        puts $fp "iteration=$iteration"
+        close $fp
+        puts "INFO: Saved reports to best_passing_reports/"
     }}
 
     # Save intermediate best result after each iteration

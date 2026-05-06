@@ -378,14 +378,26 @@ class Compressor(Node):
 
     @property
     def delay(self):
+        from .accumulator import AccumulatorStage
+
         delay_ = 0
         for s in self.stages:
             if isinstance(s, PipelineStage):
                 delay_ += 1
-            from .accumulator import AccumulatorStage
 
             if isinstance(s, AccumulatorStage):
-                delay_ += 1
+                # Normal mode: +1 (input register; output comes directly from adder)
+                # Low-latency mode: +2 (input reg + quad output reg) + quad_adder.delay
+                if s.low_latency:
+                    quad_delay = s.quad_adder.delay if hasattr(s, 'quad_adder') else 0
+                    delay_ += 2 + quad_delay
+                else:
+                    delay_ += 1
+            # Check for pipelined final adders in CompressionStages
+            if isinstance(s, CompressionStage):
+                for counter, _ in s.counters_with_shifts:
+                    if hasattr(counter, 'delay'):
+                        delay_ += counter.delay
         return delay_
 
     def accept(self, visitor) -> None:

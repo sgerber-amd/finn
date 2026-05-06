@@ -8,7 +8,7 @@
 
 from ..graph.final_adder import FinalAdder
 from ..graph.nodes import Compressor, Counter, GateAbsorptionCounter
-from ..graph.primitives import LUT6CY
+from ..graph.primitives import LOOKAHEAD8, LUT6CY
 from .node_iterator import NodeIterator
 
 
@@ -27,8 +27,11 @@ class LUTPlacer(NodeIterator):
     def _get_ripple_connected_luts(self, c: Counter):
         "Among all LUTs inside a counter, reconstruct all ripple connections."
         if isinstance(c, FinalAdder):
-            # No manual placement needed, as final adders use the LOOKAHEAD8,
-            # which restricts enforces correct placement itself.
+            # Final adders always use LOOKAHEAD8 which handles placement.
+            return []
+
+        # Skip placement for counters using LOOKAHEAD8 (handles placement itself).
+        if any(isinstance(inst, LOOKAHEAD8) for inst in c.instances):
             return []
 
         lut6cy_i4s = {lut.I4: lut for lut in c.luts if isinstance(lut, LUT6CY)}

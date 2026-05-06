@@ -9,17 +9,32 @@
 #############################################################################
 
 # Run standalone add_multi compressor tests.
-# For each (N, ARG_WIDTH) configuration:
+# For each (N, ARG_WIDTH) configuration and mode:
 #   1. Generate comp_NuW_dD.sv via add_multi_finn.py
 #   2. Expand TB and TCL templates
 #   3. Run XSim via Vivado
 #
-# Usage: ./run_add_multi_comp_tests.sh [versal|7series]
+# Note: add_multi does NOT use accumulation, so --low-latency-accu doesn't apply.
+#       However, --hw-efficient controls counter cascade type (VersalAtom222 vs VersalAtomCascade).
+#
+# Usage: ./run_add_multi_comp_tests.sh [mode] [target]
+#   mode: "", "hw" (default: run both)
+#   target: versal, 7series, ultrascale (default: versal)
 # Prerequisites: Vivado on PATH
 
 ((${KEEP_LOG:=0}))
 ((${MAX_WORKERS:=12}))
-TARGET="${1:-versal}"  # Default to versal
+
+# Parse mode and target arguments
+MODE_ARG="${1:-all}"
+TARGET="${2:-versal}"
+
+# Define modes to test (only "" and "hw" for add_multi, no "ll" since no accumulation)
+if [[ "$MODE_ARG" == "all" ]]; then
+	MODES=("" "hw")
+else
+	MODES=("$MODE_ARG")
+fi
 
 if ! command -v vivado >/dev/null 2>&1; then
 	echo "ERROR: vivado not found in PATH." >&2
@@ -29,6 +44,7 @@ fi
 echo "Vivado: $(command -v vivado)"
 echo "Settings: KEEP_LOG=$KEEP_LOG MAX_WORKERS=$MAX_WORKERS"
 echo "Target: $TARGET"
+echo "Modes: ${MODES[*]}"
 
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -53,7 +69,8 @@ TESTS=(
 )
 
 function parse_config {
-	local n="" w="" p=""
+	local n="" w="" p="" mode="$1"
+	shift
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--n)         n="$2"; shift 2;;
@@ -62,8 +79,18 @@ function parse_config {
 			*)           shift;;
 		esac
 	done
-	CFG_N="$n"; CFG_W="$w"
+	CFG_N="$n"; CFG_W="$w"; CFG_MODE="$mode"
+
+	# Build label with mode suffix
 	CFG_LABEL="n${n}_w${w}"; [ -n "$p" ] && CFG_LABEL="${CFG_LABEL}_p${p}"
+	[ -n "$mode" ] && CFG_LABEL="${CFG_LABEL}_${mode}"
+
+	# Build mode flags (only hw for add_multi, no ll since no accumulation)
+	CFG_MODE_FLAGS=""
+	if [[ "$mode" == "hw" ]]; then
+		CFG_MODE_FLAGS="--hw-efficient"
+	fi
+
 	# Set FPGA part based on TARGET variable
 	if [[ "$TARGET" == "7series" ]]; then
 		CFG_PART="xc7z020clg400-1"  # Pynq-Z1
@@ -88,39 +115,41 @@ function run_sim {
 # Phase 1: Generate
 LABELS=()
 echo -e "Generating configs:\n"
-for args in "${TESTS[@]}"; do
-	CFG_P_FLAG=""
-	# shellcheck disable=SC2086
-	parse_config $args
-	label="$CFG_LABEL"
-	LABELS+=("$label")
-	gen_dir="$GEN_BASE/$label"
-	mkdir -p "$gen_dir"
+for mode in "${MODES[@]}"; do
+	for args in "${TESTS[@]}"; do
+		CFG_P_FLAG=""
+		# shellcheck disable=SC2086
+		parse_config "$mode" $args
+		label="$CFG_LABEL"
+		LABELS+=("$label")
+		gen_dir="$GEN_BASE/$label"
+		mkdir -p "$gen_dir"
 
-	echo "  $label ..."
+		echo "  $label ..."
 
-	# Generate compressor
-	# shellcheck disable=SC2086
-	if ! gen_out=$(python3 -m finn.compressor.src.add_multi_finn \
-		--n "$CFG_N" --arg_width "$CFG_W" $CFG_P_FLAG -o "$gen_dir" 2>&1); then
-		echo "GENERATION FAILED: $gen_out" >&2; exit 1
-	fi
+		# Generate compressor
+		# shellcheck disable=SC2086
+		if ! gen_out=$(python3 -m finn.compressor.src.add_multi_finn \
+			--n "$CFG_N" --arg_width "$CFG_W" $CFG_P_FLAG $CFG_MODE_FLAGS -o "$gen_dir" 2>&1); then
+			echo "GENERATION FAILED: $gen_out" >&2; exit 1
+		fi
 
-	comp_name=$(echo "$gen_out" | sed -n 's/^ *Module name:[[:space:]]*//p' | head -n 1)
-	comp_depth=$(echo "$gen_out" | sed -n 's/^ *Pipeline depth:[[:space:]]*//p' | head -n 1 | grep -Eo '[0-9]+' || true)
-	[ -z "$comp_name" ] && { echo "ERROR: No module name for $label" >&2; exit 1; }
-	[ -z "$comp_depth" ] && { echo "ERROR: No depth for $label" >&2; exit 1; }
+		comp_name=$(echo "$gen_out" | sed -n 's/^ *Module name:[[:space:]]*//p' | head -n 1)
+		comp_depth=$(echo "$gen_out" | sed -n 's/^ *Pipeline depth:[[:space:]]*//p' | head -n 1 | grep -Eo '[0-9]+' || true)
+		[ -z "$comp_name" ] && { echo "ERROR: No module name for $label" >&2; exit 1; }
+		[ -z "$comp_depth" ] && { echo "ERROR: No depth for $label" >&2; exit 1; }
 
-	# Expand TB
-	sed -e "s/{n}/$CFG_N/g" -e "s/{arg_width}/$CFG_W/g" \
-	    -e "s/{depth}/$comp_depth/g" -e "s/{label}/$label/g" \
-	    -e "s/{comp_module}/$comp_name/g" \
-	    "$HDL_DIR/add_multi_comp_tb_template.sv" > "$gen_dir/add_multi_comp_${label}_tb.sv"
+		# Expand TB
+		sed -e "s/{n}/$CFG_N/g" -e "s/{arg_width}/$CFG_W/g" \
+		    -e "s/{depth}/$comp_depth/g" -e "s/{label}/$label/g" \
+		    -e "s/{comp_module}/$comp_name/g" \
+		    "$HDL_DIR/add_multi_comp_tb_template.sv" > "$gen_dir/add_multi_comp_${label}_tb.sv"
 
-	# Expand TCL
-	sed -e "s|{label}|$label|g" -e "s|{tb}|add_multi_comp_${label}_tb|g" \
-	    -e "s|{gen_dir}|$gen_dir|g" -e "s|{part}|$CFG_PART|g" \
-	    "$HDL_DIR/add_multi_comp_template.tcl" > "$gen_dir/add_multi_comp_${label}.tcl"
+		# Expand TCL
+		sed -e "s|{label}|$label|g" -e "s|{tb}|add_multi_comp_${label}_tb|g" \
+		    -e "s|{gen_dir}|$gen_dir|g" -e "s|{part}|$CFG_PART|g" \
+		    "$HDL_DIR/add_multi_comp_template.tcl" > "$gen_dir/add_multi_comp_${label}.tcl"
+	done
 done
 echo
 

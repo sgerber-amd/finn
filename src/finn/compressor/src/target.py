@@ -26,6 +26,7 @@ from .graph.counters.counter_candidates import (
     RippleSumCandidate,
     SixThreeCandidate,
     TenSixCandidate,
+    VersalAtom222CascadeCandidate,
     VersalAtomCascadeCandidate,
 )
 from .graph.final_adder import FinalAdder, MuxCYTernaryAdder, QuaternaryAdder
@@ -71,6 +72,7 @@ class Target(ABC):
 
 class Versal(Target):
     def __init__(self):
+        # LOOKAHEAD8 candidates for non-accumulator mode (timing-critical)
         self.counter_candidates = [
             TenSixCandidate(),
             FACandidate(),
@@ -79,6 +81,15 @@ class Versal(Target):
             FiveTwoCandidate(),
             SixThreeCandidate(),
             VersalAtomCascadeCandidate(),
+        ]
+        self.counter_candidates_accumulator = [
+            TenSixCandidate(),
+            FACandidate(),
+            RippleSumCandidate(),
+            DualRailRippleSumCandidate(),
+            FiveTwoCandidate(),
+            SixThreeCandidate(),
+            VersalAtom222CascadeCandidate(),
         ]
         self.absorbing_counter_candidates = [
             VersalPredAdderCandidate(),

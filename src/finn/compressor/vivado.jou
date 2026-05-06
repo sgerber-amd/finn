@@ -1,0 +1,24 @@
+#-----------------------------------------------------------
+# Vivado v2024.1 (64-bit)
+# SW Build 5076996 on Wed May 22 18:36:09 MDT 2024
+# IP Build 5075265 on Wed May 22 21:45:21 MDT 2024
+# SharedData Build 5076995 on Wed May 22 18:29:18 MDT 2024
+# Start of session at: Wed Apr 29 09:25:10 2026
+# Process ID: 2757691
+# Current directory: /home/sgerber/test_repos/finn/src/finn/compressor
+# Command line: vivado -mode batch -source dotp_3xu5u4.tcl
+# Log file: /home/sgerber/test_repos/finn/src/finn/compressor/vivado.log
+# Journal file: /home/sgerber/test_repos/finn/src/finn/compressor/vivado.jou
+# Running On        :xirengcto03
+# Platform          :Ubuntu
+# Operating System  :Ubuntu 24.04.1 LTS
+# Processor Detail  :AMD EPYC 7313 16-Core Processor
+# CPU Frequency     :3716.786 MHz
+# CPU Physical cores:32
+# CPU Logical cores :64
+# Host memory       :270036 MB
+# Swap memory       :6865 MB
+# Total Virtual     :276901 MB
+# Available Virtual :116670 MB
+#-----------------------------------------------------------
+source dotp_3xu5u4.tcl

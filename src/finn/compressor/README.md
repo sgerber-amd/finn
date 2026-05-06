@@ -32,6 +32,25 @@ Generate a compressor of shape `(12,12,12)` called `comp` and save it under `/ge
 
 See `python3 -m finn.compressor.src.main -h` for details.
 
+## Compressor Modes
+Two architectural choices control performance/resource trade-offs:
+
+**Counter type** (hw_efficient flag):
+- `lookahead`: LOOKAHEAD8 primitive (fast compression, higher resources)
+- `ripple`: VersalAtom222 (33% fewer LUTs via O52→I4 ripple, slower compression)
+
+**Accumulator type** (low_latency_accu flag):
+- `std`: Single QuaternaryAdder with direct feedback (slow feedback, +1 cycle)
+- `lowlat`: Pipelined QuaternaryAdder + BinaryAdder feedback (fast feedback, +2 cycles)
+
+**Sensible modes:**
+- `lookahead_lowlat` - Fast compression + fast feedback (highest Fmax, DEFAULT)
+- `ripple_std` - LUT-efficient, accepts slow feedback
+- `ripple_lowlat` - LUT-efficient + fast feedback recovery (RECOMMENDED for efficiency)
+
+**Nonsensical mode:**
+- `lookahead_std` - Fast compression wasted by slow feedback (bottleneck is feedback loop)
+
 ## Testing
 Run the test suite for verification on different platforms:
 
@@ -39,8 +58,9 @@ Run the test suite for verification on different platforms:
 # Core compressor tests (21 configs)
 ./run_tests.sh "" versal        # or 7series, ultrascale
 
-# MVAU integration tests (8 configs)
-./run_dotp_comp_tests.sh versal # or 7series, ultrascale
+# MVAU integration tests with mode selection (8 configs × 4 modes)
+./run_dotp_comp_tests.sh lookahead_std versal   # or ripple_std, ripple_lowlat, all
+./run_dotp_comp_tests.sh all versal             # Test all 4 modes
 
 # Multi-operand adder tests (8 configs)
 ./run_add_multi_comp_tests.sh versal # or 7series, ultrascale

@@ -22,7 +22,13 @@ if __name__ == "__main__":
     (n, na, nb, sa, sb) = (int(_[0]), int(_[2]), int(_[4]), _[1] == "s", _[3] == "s")
     assert nb <= na
 
-    # Target platform: ca/accu goes in argv[2], target in argv[3] (default versal)
+    # Mode parameter in argv[2]: can be "", "ca", "hw", "ll", "hwll", "ca_hw", "ca_ll", "ca_hwll"
+    mode_arg = sys.argv[2] if len(sys.argv) > 2 else ""
+    use_ca = "ca" in mode_arg
+    hw_efficient = "hw" in mode_arg
+    low_latency = "ll" in mode_arg
+
+    # Target platform: argv[3] (default versal)
     target_arg = sys.argv[3] if len(sys.argv) > 3 else "versal"
     if target_arg == "7series":
         target = SevenSeries()
@@ -53,7 +59,7 @@ if __name__ == "__main__":
     constants = []
     abs_term = n * map.absolute_term()
     # Move absolute term into absorbed constant if requested
-    if len(sys.argv) > 2 and sys.argv[2] == "ca":
+    if use_ca:
         print("Constant absorption.")
         if abs_term < 0:
             abs_term += 2**np
@@ -75,6 +81,8 @@ if __name__ == "__main__":
         constants=constants,
         path=output_path,
         test=False,
+        hw_efficient=hw_efficient,
+        low_latency_accu=low_latency,
     )
 
     # Process templates with absolute paths

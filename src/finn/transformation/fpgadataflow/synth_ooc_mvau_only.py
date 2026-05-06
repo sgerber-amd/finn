@@ -79,8 +79,10 @@ class SynthOutOfContextMVAUOnly(Transformation):
         if is_rtl:
             # RTL MVAU: Copy core SystemVerilog files
             rtllib_mvu_dir = os.path.join(finn_root, "finn-rtllib/mvu")
-            core_files = [
-                "mvu_vvu_axi.sv",  # Top-level MVAU core (NO wrapper!)
+
+            # mvu_vvu_axi.sv must come from code_gen_dir (has $DOTP_MODULE_NAME$ substituted)
+            # Other core files come from finn-rtllib/mvu
+            core_files_from_rtllib = [
                 "mvu.sv",  # MVU implementation
                 "mvu_pkg.sv",  # Package definitions
                 "replay_buffer.sv",  # Weight replay buffer
@@ -89,16 +91,24 @@ class SynthOutOfContextMVAUOnly(Transformation):
             # Add DSP-specific multiplier based on FPGA part
             dsp_block = get_dsp_block(self.part)
             if dsp_block == "DSP58":
-                core_files.append("mvu_vvu_8sx9_dsp58.sv")
+                core_files_from_rtllib.append("mvu_vvu_8sx9_dsp58.sv")
             elif dsp_block == "DSP48E2":
-                core_files.append("mvu_4sx4u_dsp48e2.sv")
+                core_files_from_rtllib.append("mvu_4sx4u_dsp48e2.sv")
             else:  # DSP48E1 (7-Series) or DSP48E (older)
-                core_files.append("mvu_4sx4u_dsp48e1.sv")
+                core_files_from_rtllib.append("mvu_4sx4u_dsp48e1.sv")
 
-            for filename in core_files:
+            for filename in core_files_from_rtllib:
                 src_path = os.path.join(rtllib_mvu_dir, filename)
                 if os.path.exists(src_path):
                     copy2(src_path, build_dir)
+
+            # Copy mvu_vvu_axi.sv from code_gen_dir (has template vars substituted)
+            mvu_vvu_axi_src = os.path.join(code_gen_dir, "mvu_vvu_axi.sv")
+            if os.path.exists(mvu_vvu_axi_src):
+                copy2(mvu_vvu_axi_src, build_dir)
+            else:
+                # Fallback to rtllib (for non-compressor paths)
+                copy2(os.path.join(rtllib_mvu_dir, "mvu_vvu_axi.sv"), build_dir)
 
             # Copy compressor files if they exist (dotp_comp, comp_*.sv)
             # These are generated in code_gen_dir
@@ -173,15 +183,21 @@ class SynthOutOfContextMVAUOnly(Transformation):
             comp_module_name = mvau_inst.get_nodeattr("comp_module_name")
             use_compressor = 1 if comp_module_name else 0
 
-            # Determine compressor pipeline depth
+            # Get compressor pipeline depth from code_gen_dir_ipgen
+            # The depth was already substituted into mvu_vvu_axi.sv during generate_hdl(),
+            # so we extract it from the generated file rather than trying to recompute it.
             comp_depth = 1  # default
             if comp_module_name:
-                # comp_module_name format: "comp_16xs2s2_a8_d3" where d3 is depth
-                import re
-
-                match = re.search(r"_d(\d+)$", comp_module_name)
-                if match:
-                    comp_depth = int(match.group(1))
+                # Read COMP_PIPELINE_DEPTH from generated mvu_vvu_axi.sv
+                mvu_axi_path = os.path.join(code_gen_dir, "mvu_vvu_axi.sv")
+                if os.path.exists(mvu_axi_path):
+                    import re
+                    with open(mvu_axi_path, "r") as f:
+                        content = f.read()
+                    # Extract from parameter declaration: "int unsigned  COMP_PIPELINE_DEPTH = N,"
+                    match = re.search(r"COMP_PIPELINE_DEPTH\s*=\s*(\d+)", content)
+                    if match:
+                        comp_depth = int(match.group(1))
 
             # Generate generics TCL file (same pattern as synth_ooc.py line 120-125)
             generics_tcl_path = os.path.join(build_dir, "mvau_generics.tcl")

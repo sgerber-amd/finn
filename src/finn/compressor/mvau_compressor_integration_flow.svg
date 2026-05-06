@@ -42,12 +42,12 @@
 
   <!-- ========== TOP ROW: DECISION FLOW (HORIZONTAL) ========== -->
 
-  <!-- Entry Node: MVAU -->
+  <!-- Entry Node: MVU -->
   <g id="entry" filter="url(#blockShadow)">
     <rect x="30" y="40" width="220" height="220" rx="5" fill="#E3F2FD" stroke="#1565C0" stroke-width="3"/>
     <rect x="30" y="40" width="220" height="35" rx="5" fill="#1976D2" stroke="#1565C0" stroke-width="2"/>
     <text x="140" y="63" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="white">
-      MVAU Node
+      MVU Node
     </text>
     <text x="140" y="125" font-family="Segoe UI, Arial, sans-serif" font-size="11" text-anchor="middle">
       Pre-specialization
@@ -66,13 +66,15 @@
     </text>
 
     <!-- Decision parameters in box -->
-    <text x="310" y="100" font-family="Consolas, monospace" font-size="10" font-weight="bold">Attributes:</text>
-    <text x="310" y="120" font-family="Consolas, monospace" font-size="9">• wdt.signed() == True</text>
-    <text x="310" y="138" font-family="Consolas, monospace" font-size="9">• noActivation == 0</text>
-    <text x="310" y="156" font-family="Consolas, monospace" font-size="9">• binaryXnorMode != 1</text>
+    <text x="310" y="95" font-family="Consolas, monospace" font-size="10" font-weight="bold">All required for RTL:</text>
+    <text x="310" y="115" font-family="Consolas, monospace" font-size="9">• wdt.signed() == True</text>
+    <text x="310" y="133" font-family="Consolas, monospace" font-size="9">• noActivation != 0</text>
+    <text x="310" y="151" font-family="Consolas, monospace" font-size="9">• binaryXnorMode != 1</text>
+    <text x="310" y="169" font-family="Consolas, monospace" font-size="9">• No BIPOLAR datatypes</text>
+    <text x="310" y="187" font-family="Consolas, monospace" font-size="9">• No INT1 datatypes</text>
 
     <text x="420" y="240" font-family="Consolas, monospace" font-size="9" text-anchor="middle" fill="#666" font-style="italic">
-      specialize_layers.py:218-268
+      specialize_layers.py:214-240
     </text>
     <text x="420" y="251" font-family="Consolas, monospace" font-size="9" text-anchor="middle" fill="#666" font-style="italic">
       _mvu_rtl_possible()
