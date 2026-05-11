@@ -630,12 +630,11 @@ class VersalAtom222CascadeCandidate(CounterCandidate):
         atom_idx = 0
         while atom_idx < 4:
             if atom_idx == 0:
-                # First position: try VersalAtom14, then VersalAtom222, then VersalAtom2
                 if fits_col(io_idx, 5) and fits_col(io_idx + 1, 1):
                     atoms.append(VersalAtom14())
                     atom_idx += 2
                     io_idx += 2
-                elif (
+                if (
                     fits_col(io_idx, 3)
                     and fits_col(io_idx + 1, 2)
                     and fits_col(io_idx + 2, 2)
