@@ -75,6 +75,13 @@ def parse_cli():
         help="Use LUT-efficient VersalAtom222 cascade (O52->I4 ripple carry). "
         "Fewer LUTs but slower than LOOKAHEAD8. Versal only, requires --accumulate.",
     )
+    parser.add_argument(
+        "--signed-magnitude",
+        type=str,
+        default=None,
+        help="Signed magnitude addition mode. Format: NUM_INPUTS,MAG_WIDTH. "
+        "Example: --signed-magnitude 4,8 for adding 4 signed magnitude numbers with 8-bit magnitude.",
+    )
     args = parser.parse_args()
 
     # Validate flag combinations
@@ -105,6 +112,15 @@ def parse_cli():
         except ValueError:
             print("Improperly defined constant.")
             exit(-1)
+    signed_magnitude = None
+    if args.signed_magnitude:
+        try:
+            parts = args.signed_magnitude.split(",")
+            signed_magnitude = (int(parts[0]), int(parts[1]))
+        except (ValueError, IndexError):
+            print("Invalid --signed-magnitude format. Use: NUM_INPUTS,MAG_WIDTH")
+            exit(-1)
+
     if args.target == "Versal":
         target = Versal()
     elif args.target == "7-Series":
@@ -127,6 +143,7 @@ def parse_cli():
         args.test,
         low_latency_accu=args.low_latency_accu,
         hw_efficient=args.hw_efficient,
+        signed_magnitude=signed_magnitude,
     )
 
 
@@ -138,12 +155,13 @@ def generate_compressor(
     accumulate: bool,
     accumulator_width: int,
     gates: List[List[str]],
-    constants: List[int],  # Each element is a binary numer digit.
+    constants: List[int],
     path: str,
     test: bool,
     enable: bool = False,
     low_latency_accu: bool = False,
     hw_efficient: bool = False,
+    signed_magnitude: Optional[tuple] = None,
 ):
     start_time = time.time()
     constructor = CompressorConstructor()
@@ -164,6 +182,11 @@ def generate_compressor(
         counter_candidates = target.counter_candidates
         print(f"DEBUG: Using LOOKAHEAD8 path (counter_candidates)")
 
+    # For signed magnitude mode, get the correction constants
+    if signed_magnitude is not None:
+        num_inputs, mag_width = signed_magnitude
+        constants = constructor.signed_magnitude_constants(num_inputs, mag_width)
+
     c = constructor(
         counter_candidates,
         target.absorbing_counter_candidates,
@@ -177,6 +200,7 @@ def generate_compressor(
         gates=gates,
         enable=enable,
         low_latency_accu=low_latency_accu,
+        signed_magnitude=signed_magnitude,
     )
 
     placer = LUTPlacer()
