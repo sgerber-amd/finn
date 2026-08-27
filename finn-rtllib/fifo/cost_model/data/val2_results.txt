@@ -1,0 +1,15 @@
+RESULT block_d3073_w100 depth=3073 width=100 style=block lut=131 lut_logic=131 lut_mem=0 lutram=0 srl=0 ff=80 ramb36=9 ramb18=0 uram=0
+RESULT block_d14337_w24 depth=14337 width=24 style=block lut=104 lut_logic=104 lut_mem=0 lutram=0 srl=0 ff=90 ramb36=11 ramb18=0 uram=0
+RESULT block_d5121_w36 depth=5121 width=36 style=block lut=107 lut_logic=107 lut_mem=0 lutram=0 srl=0 ff=86 ramb36=5 ramb18=0 uram=0
+RESULT block_d6145_w40 depth=6145 width=40 style=block lut=112 lut_logic=112 lut_mem=0 lutram=0 srl=0 ff=86 ramb36=6 ramb18=2 uram=0
+RESULT block_d12289_w9 depth=12289 width=9 style=block lut=96 lut_logic=96 lut_mem=0 lutram=0 srl=0 ff=92 ramb36=3 ramb18=0 uram=0
+RESULT block_d49153_w72 depth=49153 width=72 style=block lut=378 lut_logic=378 lut_mem=0 lutram=0 srl=0 ff=410 ramb36=96 ramb18=0 uram=0
+RESULT block_d131073_w64 depth=131073 width=64 style=block lut=974 lut_logic=974 lut_mem=0 lutram=0 srl=0 ff=475 ramb36=228 ramb18=0 uram=0
+RESULT block_d262145_w32 depth=262145 width=32 style=block lut=895 lut_logic=895 lut_mem=0 lutram=0 srl=0 ff=485 ramb36=232 ramb18=0 uram=0
+RESULT block_d1537_w33 depth=1537 width=33 style=block lut=89 lut_logic=89 lut_mem=0 lutram=0 srl=0 ff=74 ramb36=1 ramb18=1 uram=0
+RESULT block_d26625_w48 depth=26625 width=48 style=block lut=271 lut_logic=271 lut_mem=0 lutram=0 srl=0 ff=172 ramb36=43 ramb18=0 uram=0
+RESULT ultra_d33002_w16 depth=33002 width=16 style=ultra lut=157 lut_logic=124 lut_mem=33 lutram=0 srl=33 ff=152 ramb36=0 ramb18=1 uram=8
+RESULT ultra_d100002_w48 depth=100002 width=48 style=ultra lut=393 lut_logic=248 lut_mem=145 lutram=0 srl=145 ff=579 ramb36=0 ramb18=0 uram=32
+RESULT ultra_d262145_w32 depth=262145 width=32 style=ultra lut=564 lut_logic=335 lut_mem=229 lutram=0 srl=229 ff=727 ramb36=0 ramb18=0 uram=64
+RESULT ultra_d16401_w24 depth=16401 width=24 style=ultra lut=117 lut_logic=93 lut_mem=24 lutram=0 srl=24 ff=131 ramb36=0 ramb18=0 uram=4
+RESULT ultra_d262145_w72 depth=262145 width=72 style=ultra lut=1124 lut_logic=615 lut_mem=509 lutram=0 srl=509 ff=1407 ramb36=0 ramb18=0 uram=64

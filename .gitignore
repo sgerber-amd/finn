@@ -96,3 +96,6 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
+
+# FIFO cost model synthesis runs
+/finn-rtllib/fifo/cost_model/runs/
